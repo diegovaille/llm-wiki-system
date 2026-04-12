@@ -3,12 +3,17 @@ name: wiki-review
 description: List pending staged items in the wiki and offer to promote or upgrade them.
 ---
 
-This command is a pure formatter around `wiki review`. The core command owns all schema-aware filesystem logic. Do not list `~/Git/wiki/<project>/staging/*.md` by hand — always go through `wiki review`.
+**Binary (absolute path — NOT on PATH):**
+`/Users/diegovaille/Git/wiki-system/.venv/bin/wiki --config /Users/diegovaille/Git/wiki/wiki.config.toml`
+
+Below, `WIKI` refers to that absolute invocation.
+
+This command is a pure formatter around `WIKI review`. The core command owns all schema-aware filesystem logic. Do not list `/Users/diegovaille/Git/wiki/<project>/staging/*.md` by hand — always go through `WIKI review`.
 
 Steps:
 
 1. Detect the project name from the current working directory.
-2. Run: `wiki review <project>` (default is `--json`, which is what you want).
+2. Run: `WIKI review <project>` (default is `--json`, which is what you want).
 3. Parse the JSON on stdout. The output is a list of `ReviewItem` objects, already sorted: raw items first, proposed items second, then by `created_at`.
 4. Format for the user in this shape:
    ```
@@ -30,5 +35,5 @@ Steps:
 
 Hard rules:
 - Never edit staged files by hand.
-- Never list the staging directory with `Glob`/`Read`; always use `wiki review`.
-- The core contract is the `wiki review` JSON schema; this command only formats that output.
+- Never list the staging directory with `Glob`/`Read`; always use `WIKI review`.
+- The core contract is the `WIKI review` JSON schema; this command only formats that output.

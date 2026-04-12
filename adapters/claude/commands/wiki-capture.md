@@ -3,13 +3,18 @@ name: wiki-capture
 description: Distill a session learning into at most one canonical wiki change. Use only when a non-obvious decision, pattern, or assumption change occurred.
 ---
 
-Auto-chain: `wiki capture prepare` → Claude produces proposal → `wiki capture submit` → `wiki promote --apply`.
+**Binary (absolute path — NOT on PATH):**
+`/Users/diegovaille/Git/wiki-system/.venv/bin/wiki --config /Users/diegovaille/Git/wiki/wiki.config.toml`
+
+Below, `WIKI` refers to that absolute invocation.
+
+Auto-chain: `WIKI capture prepare` → Claude produces proposal → `WIKI capture submit` → `WIKI promote --apply`.
 
 Steps:
 
 1. Detect the project name from the current repo path.
 2. Collect session notes: the most relevant recent assistant turns plus any `$ARGUMENTS`.
-3. Run: `wiki capture prepare --project=<name> --session-notes=-` piping the notes in.
+3. Run: `WIKI capture prepare --project=<name> --session-notes=-` piping the notes in.
 4. The prompt package will be emitted as JSON on stdout. Read it and produce a structured proposal matching its `schema` and `allowed_actions`. The proposal is a JSON document:
    ```json
    {
@@ -24,11 +29,11 @@ Steps:
    ```
    For `action: noop`, omit `canonical_page`.
 5. Show the user a 3-line summary and ask to confirm.
-6. On confirmation, run: `wiki capture submit --project=<name> --proposal=-` piping the proposal in.
+6. On confirmation, run: `WIKI capture submit --project=<name> --proposal=-` piping the proposal in.
    - Exit 0: a `state: proposed` staged file was written. Extract `staging_path` from the JSON output.
    - Exit 3: `action: noop` — nothing was staged, nothing more to do.
    - Exit 2: schema invalid — show the error and stop.
-7. If a staged file was written, auto-chain promote: `wiki promote <project> <staging_path> --apply`
+7. If a staged file was written, auto-chain promote: `WIKI promote <project> <staging_path> --apply`
    - Exit 0: canonical page written. Report the page path.
    - Anything else: tell the user the proposal was staged but promote failed. The staged file is preserved at `<staging_path>`. They can retry with `/wiki-promote <staging_path>` or review via `/wiki-review`. Do not delete or retry silently.
 
