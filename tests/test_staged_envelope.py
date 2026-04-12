@@ -134,3 +134,78 @@ def test_round_trip_byte_identical():
     first = dumps(f.model_dump(mode="json"))
     second = dumps(loads(first))
     assert first == second
+
+
+def test_raw_must_not_carry_upgraded_from():
+    data = {
+        "state": "raw",
+        "origin": "sync",
+        "created_at": "2026-04-12T14:30:00Z",
+        "created_by": "post-spec-hook",
+        "source_artifact": "docs/foo.md",
+        "trigger": "post-spec",
+        "raw_body_mode": "inline",
+        "upgraded_from": {
+            "raw_file": "staged/foo.yaml",
+            "origin": "sync",
+        },
+    }
+    with pytest.raises(ValidationError, match="upgraded_from"):
+        StagedFile.model_validate(data)
+
+
+def test_proposed_must_not_carry_raw_only_fields():
+    base = {
+        "state": "proposed",
+        "origin": "capture",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "capture",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+
+    with pytest.raises(ValidationError, match="source_artifact"):
+        StagedFile.model_validate({**base, "source_artifact": "docs/foo.md"})
+
+    with pytest.raises(ValidationError, match="source_commit"):
+        StagedFile.model_validate({**base, "source_commit": "abc123"})
+
+    with pytest.raises(ValidationError, match="trigger"):
+        StagedFile.model_validate({**base, "trigger": "post-spec"})
+
+    with pytest.raises(ValidationError, match="raw_body_bytes"):
+        StagedFile.model_validate({**base, "raw_body_bytes": 512})
+
+
+def test_raw_with_capture_origin_rejected():
+    data = {
+        "state": "raw",
+        "origin": "capture",
+        "created_at": "2026-04-12T14:30:00Z",
+        "created_by": "post-spec-hook",
+        "source_artifact": "docs/foo.md",
+        "raw_body_mode": "inline",
+    }
+    with pytest.raises(ValidationError, match="origin in \\(sync, manual\\)"):
+        StagedFile.model_validate(data)
+
+
+def test_proposed_with_sync_origin_rejected():
+    data = {
+        "state": "proposed",
+        "origin": "sync",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "capture",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+    with pytest.raises(ValidationError, match="origin in \\(capture, bootstrap\\)"):
+        StagedFile.model_validate(data)

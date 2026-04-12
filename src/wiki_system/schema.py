@@ -97,7 +97,7 @@ class ProposedAction(str, Enum):
 
 
 class UpgradedFrom(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     raw_file: str
     origin: StagedFileOrigin
@@ -138,6 +138,10 @@ class StagedFile(BaseModel):
     @model_validator(mode="after")
     def _validate_state_shape(self) -> "StagedFile":
         if self.state == StagedState.RAW.value:
+            if self.origin not in (StagedFileOrigin.SYNC.value, StagedFileOrigin.MANUAL.value):
+                raise ValueError(
+                    f"state: raw requires origin in (sync, manual), got {self.origin}"
+                )
             if self.source_artifact is None:
                 raise ValueError("state: raw requires source_artifact")
             if self.raw_body_mode is None:
@@ -148,15 +152,29 @@ class StagedFile(BaseModel):
                 raise ValueError("state: raw must not carry proposed_action")
             if self.target_page_id is not None:
                 raise ValueError("state: raw must not carry target_page_id")
+            if self.upgraded_from is not None:
+                raise ValueError("state: raw must not carry upgraded_from")
             return self
 
         # state == proposed
+        if self.origin not in (StagedFileOrigin.CAPTURE.value, StagedFileOrigin.BOOTSTRAP.value):
+            raise ValueError(
+                f"state: proposed requires origin in (capture, bootstrap), got {self.origin}"
+            )
         if self.proposed_action is None:
             raise ValueError("state: proposed requires proposed_action")
         if self.canonical_page is None:
             raise ValueError("state: proposed requires canonical_page")
         if self.raw_body_mode is not None:
             raise ValueError("state: proposed must not carry raw_body_mode")
+        if self.source_artifact is not None:
+            raise ValueError("state: proposed must not carry source_artifact")
+        if self.source_commit is not None:
+            raise ValueError("state: proposed must not carry source_commit")
+        if self.trigger is not None:
+            raise ValueError("state: proposed must not carry trigger")
+        if self.raw_body_bytes is not None:
+            raise ValueError("state: proposed must not carry raw_body_bytes")
 
         # Page identity invariant
         emb_id = self.canonical_page.frontmatter.id
