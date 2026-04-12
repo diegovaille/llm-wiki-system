@@ -4,37 +4,47 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+# All config models forbid unknown fields so that typos in wiki.config.toml
+# surface as ValidationError rather than silently reverting to defaults.
+_STRICT = ConfigDict(extra="forbid")
 
 
 class WikiSection(BaseModel):
+    model_config = _STRICT
     root: str
 
 
 class AgentBackend(BaseModel):
+    model_config = _STRICT
     runtime: str
     model_hint: str = "opus"
 
 
 class DirectBackend(BaseModel):
+    model_config = _STRICT
     provider: str = "anthropic"
     model: str = "claude-opus-4-6"
     api_key_env: str = "ANTHROPIC_API_KEY"
 
 
 class ExecutionSection(BaseModel):
+    model_config = _STRICT
     mode: str = "agent"
     agent: AgentBackend
     direct: DirectBackend | None = None
 
 
 class ProjectConfig(BaseModel):
+    model_config = _STRICT
     name: str
     repo_path: str
     source_globs: list[str] = Field(default_factory=list)
 
 
 class RetrievalConfig(BaseModel):
+    model_config = _STRICT
     field_weights: dict[str, float] = Field(
         default_factory=lambda: {
             "title": 5.0,
@@ -51,19 +61,23 @@ class RetrievalConfig(BaseModel):
 
 
 class CaptureConfig(BaseModel):
+    model_config = _STRICT
     bias_toward_noop: bool = True
     bias_toward_update: bool = True
 
 
 class SyncConfig(BaseModel):
+    model_config = _STRICT
     inline_threshold_bytes: int = 65536
 
 
 class IndexConfig(BaseModel):
+    model_config = _STRICT
     schema_warnings: str = "non-fatal"
 
 
 class WikiConfig(BaseModel):
+    model_config = _STRICT
     wiki: WikiSection
     execution: ExecutionSection
     projects: list[ProjectConfig] = Field(default_factory=list)

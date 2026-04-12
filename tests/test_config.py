@@ -84,3 +84,28 @@ source_globs = []
     assert cfg.retrieval.curated_edge_weight == 3.0
     assert cfg.retrieval.inferred_edge_weight == 1.0
     assert cfg.sync.inline_threshold_bytes == 65536
+
+
+def test_unknown_field_rejected(tmp_path: Path):
+    cfg_path = tmp_path / "wiki.config.toml"
+    cfg_path.write_text(
+        """
+[wiki]
+root = "~/Git/wiki"
+unknown_field = "should be rejected"
+
+[execution]
+mode = "agent"
+[execution.agent]
+runtime = "claude-code"
+model_hint = "opus"
+
+[[projects]]
+name = "luminavine"
+repo_path = "/tmp/x"
+source_globs = []
+"""
+    )
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="unknown_field"):
+        load_config(cfg_path)
