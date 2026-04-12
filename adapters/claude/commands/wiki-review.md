@@ -1,0 +1,34 @@
+---
+name: wiki-review
+description: List pending staged items in the wiki and offer to promote or upgrade them.
+---
+
+This command is a pure formatter around `wiki review`. The core command owns all schema-aware filesystem logic. Do not list `~/Git/wiki/<project>/staging/*.md` by hand — always go through `wiki review`.
+
+Steps:
+
+1. Detect the project name from the current working directory.
+2. Run: `wiki review <project>` (default is `--json`, which is what you want).
+3. Parse the JSON on stdout. The output is a list of `ReviewItem` objects, already sorted: raw items first, proposed items second, then by `created_at`.
+4. Format for the user in this shape:
+   ```
+   Staging queue for <project> (<N> item(s)):
+
+   RAW (needs upgrade via /wiki-capture --from-staged=<path>)
+   - <staging_path>
+     origin: <origin> | trigger: <trigger> | source: <source_artifact>
+
+   PROPOSED (ready to promote via /wiki-promote <path>)
+   - <staging_path>
+     <proposed_action>: <proposed_title> (id: <proposed_page_id>)
+     summary: <proposed_summary>
+   ```
+5. If an item has `parse_error`, surface it clearly and recommend manual inspection.
+6. Ask the user which item to act on. Based on state:
+   - `state: raw` → offer `/wiki-capture --from-staged=<staging_path>` (v0.2 feature; in v0.1 this is purely informational)
+   - `state: proposed` → offer `/wiki-promote <staging_path>`
+
+Hard rules:
+- Never edit staged files by hand.
+- Never list the staging directory with `Glob`/`Read`; always use `wiki review`.
+- The core contract is the `wiki review` JSON schema; this command only formats that output.

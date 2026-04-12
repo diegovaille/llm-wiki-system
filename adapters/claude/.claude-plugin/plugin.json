@@ -1,0 +1,7 @@
+{
+  "name": "wiki",
+  "version": "0.1.0",
+  "description": "Personal wiki compiler: query, capture, review, promote compiled project knowledge.",
+  "author": "diegovaille",
+  "license": "MIT"
+}
