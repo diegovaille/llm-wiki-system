@@ -3751,8 +3751,8 @@ def _seed(wiki_root: Path) -> None:
 
 
 def _runner() -> CliRunner:
-    # mix_stderr=False keeps stdout and stderr separate so we can assert on each.
-    return CliRunner(mix_stderr=False)
+    # click 8.3 always separates stdout and stderr; no mix_stderr flag.
+    return CliRunner()
 
 
 def test_cli_index_and_query_round_trip(wiki_root: Path, tmp_path: Path):
@@ -4303,7 +4303,7 @@ Run:
 ```bash
 cd /Users/diegovaille/Git/wiki-system && .venv/bin/pytest tests/test_cli.py -v
 ```
-Expected: `11 passed`
+Expected: `10 passed`
 
 - [ ] **Step 5: Run the full test suite to catch any regressions**
 
