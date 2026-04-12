@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from wiki_system.schema import (
     CanonicalPageEmbed,
@@ -51,7 +52,7 @@ def test_write_and_read_page_round_trip(wiki_root: Path):
     loaded_fm, loaded_body = read_page(path)
     assert loaded_fm.id == fm.id
     assert loaded_fm.title == fm.title
-    assert loaded_body.strip() == body.strip()
+    assert loaded_body == body
 
 
 def test_list_pages_returns_all_markdown_in_pages_dir(wiki_root: Path):
@@ -157,5 +158,5 @@ extra_garbage: oops
 Body
 """
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError, match="extra_garbage"):
         read_page(bad)
