@@ -1,0 +1,91 @@
+"""TOML config loading for wiki-system."""
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+
+class WikiSection(BaseModel):
+    root: str
+
+
+class AgentBackend(BaseModel):
+    runtime: str
+    model_hint: str = "opus"
+
+
+class DirectBackend(BaseModel):
+    provider: str = "anthropic"
+    model: str = "claude-opus-4-6"
+    api_key_env: str = "ANTHROPIC_API_KEY"
+
+
+class ExecutionSection(BaseModel):
+    mode: str = "agent"
+    agent: AgentBackend
+    direct: DirectBackend | None = None
+
+
+class ProjectConfig(BaseModel):
+    name: str
+    repo_path: str
+    source_globs: list[str] = Field(default_factory=list)
+
+
+class RetrievalConfig(BaseModel):
+    field_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "title": 5.0,
+            "aliases": 4.0,
+            "domains": 3.0,
+            "type": 2.0,
+            "headings": 2.0,
+            "body": 1.0,
+        }
+    )
+    curated_edge_weight: float = 3.0
+    inferred_edge_weight: float = 1.0
+    recency_tiebreaker_days: int = 30
+
+
+class CaptureConfig(BaseModel):
+    bias_toward_noop: bool = True
+    bias_toward_update: bool = True
+
+
+class SyncConfig(BaseModel):
+    inline_threshold_bytes: int = 65536
+
+
+class IndexConfig(BaseModel):
+    schema_warnings: str = "non-fatal"
+
+
+class WikiConfig(BaseModel):
+    wiki: WikiSection
+    execution: ExecutionSection
+    projects: list[ProjectConfig] = Field(default_factory=list)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)
+    sync: SyncConfig = Field(default_factory=SyncConfig)
+    index: IndexConfig = Field(default_factory=IndexConfig)
+
+    def get_project(self, name: str) -> ProjectConfig:
+        for p in self.projects:
+            if p.name == name:
+                return p
+        raise KeyError(f"Project '{name}' not found in config")
+
+    def wiki_root_path(self) -> Path:
+        return Path(self.wiki.root).expanduser().resolve()
+
+    def project_subtree(self, name: str) -> Path:
+        return self.wiki_root_path() / name
+
+
+def load_config(path: Path) -> WikiConfig:
+    with open(path, "rb") as fh:
+        data = tomllib.load(fh)
+    return WikiConfig.model_validate(data)
