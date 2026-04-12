@@ -1,0 +1,67 @@
+# wiki-system configuration. Copy this file to your wiki data repo (typically
+# ~/Git/wiki/wiki.config.toml) and edit the [[projects]] entries for each
+# codebase you want wiki-enabled.
+#
+# Paths may use `~` for home expansion. `wiki init` will seed a copy of this
+# file in your wiki data repo if none exists.
+
+[wiki]
+# Absolute or `~`-prefixed path to the wiki data repo. All per-project content
+# (pages, staging, sources, queries, views, meta) lives under this root,
+# namespaced by project name.
+root = "~/Git/wiki"
+
+[execution]
+# v0.1 only implements "agent" mode (a Claude Code / Codex session supplies
+# the generative steps for capture prepare/submit). "direct" mode is v0.2.
+mode = "agent"
+
+[execution.agent]
+runtime = "claude-code"
+model_hint = "opus"
+
+# One [[projects]] block per codebase you want wiki-enabled. The project `name`
+# is used everywhere: the wiki subtree (`<wiki.root>/<name>/`), the `project:`
+# field in page frontmatter, and the `wiki query <name> "..."` CLI argument.
+#
+# `repo_path` is where the project's source code lives — wiki capture reads
+# pointer-mode artifacts from it, and wiki query auto-detects the active
+# project by matching the current working directory against repo_path.
+#
+# `source_globs` controls which files in repo_path are eligible for future
+# `wiki sync` registration (v0.2); unused in v0.1.
+[[projects]]
+name = "example-project"
+repo_path = "~/Git/example-project"
+source_globs = ["docs/**/*.md"]
+
+# Add more projects by appending more [[projects]] blocks:
+# [[projects]]
+# name = "another-project"
+# repo_path = "~/Git/another-project"
+# source_globs = ["docs/**/*.md", "README.md"]
+
+[retrieval]
+# Per-field weights used by `wiki query`'s lexical scorer. Higher = more
+# important. Defaults shown; override selectively.
+field_weights = { title = 5.0, aliases = 4.0, domains = 3.0, type = 2.0, headings = 2.0, body = 1.0 }
+
+# Graph-expansion weights. Curated edges come from page `related:` lists;
+# inferred edges come from back-references and shared sources.
+curated_edge_weight = 3.0
+inferred_edge_weight = 1.0
+
+# Tie-breaker recency window. Pages updated within this window score slightly
+# higher when lexical scores are equal.
+recency_tiebreaker_days = 30
+
+[capture]
+# The two biases that keep the wiki distilled rather than a docs mirror.
+# Keep these true unless you really want capture to prefer new pages.
+bias_toward_noop = true
+bias_toward_update = true
+
+[sync]
+# Raw artifacts smaller than this are embedded inline in the staged file;
+# larger ones become pointers that capture re-reads at prepare time.
+inline_threshold_bytes = 65536
