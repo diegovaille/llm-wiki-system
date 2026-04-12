@@ -1,4 +1,9 @@
-"""Promotion of proposed staged files to canonical pages."""
+"""Promotion of proposed staged files to canonical pages.
+
+v0.1 housekeeping (manifest → archive → index → views) runs without
+rollback: a partial failure leaves the store recoverable by retry but
+temporarily inconsistent. See Task 9 in the plan for the rationale.
+"""
 from __future__ import annotations
 
 import difflib
@@ -48,7 +53,10 @@ def promote(
         )
 
     cp = staged.canonical_page
-    assert cp is not None  # validated by schema
+    if cp is None:
+        raise PromoteRejection(
+            "staged file is state: proposed but missing canonical_page"
+        )
     new_fm = cp.frontmatter
     new_body = cp.body
     existing_ids = {p.stem for p in list_pages(wiki_root, project)}

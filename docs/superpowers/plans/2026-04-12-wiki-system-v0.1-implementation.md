@@ -2375,12 +2375,13 @@ cd /Users/diegovaille/Git/wiki-system && git add src/wiki_system/query.py tests/
 
 Create `tests/test_promote.py`:
 ```python
+import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from wiki_system.promote import PromoteResult, promote
+from wiki_system.promote import PromoteRejection, PromoteResult, promote
 from wiki_system.schema import (
     CanonicalPageEmbed,
     Confidence,
@@ -2467,9 +2468,15 @@ def test_promote_create_apply(wiki_root: Path):
     assert not staged_path.exists()
     archive = wiki_root / "luminavine" / "staging" / ".archive" / staged_path.name
     assert archive.exists()
-    # Manifest updated
+    # Manifest updated with a structured entry
     manifest = (wiki_root / "luminavine" / "sources" / "manifest.jsonl").read_text()
-    assert "lv-foo" in manifest
+    entries = [json.loads(line) for line in manifest.splitlines() if line]
+    assert any(
+        e["id"] == "lv-foo"
+        and e["action"] == "create"
+        and e["from_staged"] == staged_path.name
+        for e in entries
+    )
 
 
 def test_promote_rejects_state_raw(wiki_root: Path):
@@ -2498,6 +2505,8 @@ def test_promote_update_applies_diff(wiki_root: Path):
     staged_path = write_staged(wiki_root, "luminavine", sf, "", slug="update-foo")
     result = promote(wiki_root, "luminavine", staged_path, apply=True)
     assert result.action == "update"
+    assert "+New body.\n" in result.diff
+    assert "-Old body.\n" in result.diff
     pages = list_pages(wiki_root, "luminavine")
     assert len(pages) == 1
     _, body = read_page(pages[0])
@@ -2524,9 +2533,6 @@ def test_promote_rejects_update_when_target_missing(wiki_root: Path):
     with pytest.raises(PromoteRejection) as excinfo:
         promote(wiki_root, "luminavine", staged_path, apply=True)
     assert "missing" in str(excinfo.value).lower() or "does not exist" in str(excinfo.value).lower()
-
-
-from wiki_system.promote import PromoteRejection  # noqa: E402
 ```
 
 - [ ] **Step 2: Run tests, verify they fail**
@@ -2541,7 +2547,12 @@ Expected: ImportError for `wiki_system.promote`
 
 Create `src/wiki_system/promote.py`:
 ```python
-"""Promotion of proposed staged files to canonical pages."""
+"""Promotion of proposed staged files to canonical pages.
+
+v0.1 housekeeping (manifest → archive → index → views) runs without
+rollback: a partial failure leaves the store recoverable by retry but
+temporarily inconsistent. See Task 9 in the plan for the rationale.
+"""
 from __future__ import annotations
 
 import difflib
@@ -2591,7 +2602,10 @@ def promote(
         )
 
     cp = staged.canonical_page
-    assert cp is not None  # validated by schema
+    if cp is None:
+        raise PromoteRejection(
+            "staged file is state: proposed but missing canonical_page"
+        )
     new_fm = cp.frontmatter
     new_body = cp.body
     existing_ids = {p.stem for p in list_pages(wiki_root, project)}

@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -90,9 +91,15 @@ def test_promote_create_apply(wiki_root: Path):
     assert not staged_path.exists()
     archive = wiki_root / "luminavine" / "staging" / ".archive" / staged_path.name
     assert archive.exists()
-    # Manifest updated
+    # Manifest updated with a structured entry
     manifest = (wiki_root / "luminavine" / "sources" / "manifest.jsonl").read_text()
-    assert "lv-foo" in manifest
+    entries = [json.loads(line) for line in manifest.splitlines() if line]
+    assert any(
+        e["id"] == "lv-foo"
+        and e["action"] == "create"
+        and e["from_staged"] == staged_path.name
+        for e in entries
+    )
 
 
 def test_promote_rejects_state_raw(wiki_root: Path):
@@ -121,6 +128,8 @@ def test_promote_update_applies_diff(wiki_root: Path):
     staged_path = write_staged(wiki_root, "luminavine", sf, "", slug="update-foo")
     result = promote(wiki_root, "luminavine", staged_path, apply=True)
     assert result.action == "update"
+    assert "+New body.\n" in result.diff
+    assert "-Old body.\n" in result.diff
     pages = list_pages(wiki_root, "luminavine")
     assert len(pages) == 1
     _, body = read_page(pages[0])
