@@ -3554,7 +3554,7 @@ Create `src/wiki_system/review.py`:
 """Deterministic listing of the staging review queue."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -3637,25 +3637,17 @@ def _state_order(state: str) -> int:
 def _item_from(sf: StagedFile, path: Path) -> ReviewItem:
     item = ReviewItem(
         staging_path=str(path),
-        state=sf.state if isinstance(sf.state, str) else sf.state.value,
-        origin=sf.origin if isinstance(sf.origin, str) else sf.origin.value,
+        state=sf.state,
+        origin=sf.origin,
         created_at=sf.created_at.isoformat(),
         created_by=sf.created_by,
     )
     if item.state == StagedState.RAW.value:
         item.source_artifact = sf.source_artifact
         item.trigger = sf.trigger
-        item.raw_body_mode = (
-            sf.raw_body_mode
-            if isinstance(sf.raw_body_mode, str) or sf.raw_body_mode is None
-            else sf.raw_body_mode.value
-        )
+        item.raw_body_mode = sf.raw_body_mode
     else:
-        item.proposed_action = (
-            sf.proposed_action
-            if isinstance(sf.proposed_action, str) or sf.proposed_action is None
-            else sf.proposed_action.value
-        )
+        item.proposed_action = sf.proposed_action
         item.target_page_id = sf.target_page_id
         if sf.canonical_page is not None:
             item.proposed_page_id = sf.canonical_page.frontmatter.id
