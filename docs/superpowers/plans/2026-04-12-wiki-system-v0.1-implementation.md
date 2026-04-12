@@ -1455,8 +1455,6 @@ def _join_frontmatter(yaml_text: str, body: str) -> str:
     out += f"{FRONTMATTER_DELIM}\n"
     if body:
         out += "\n" + body
-        if not body.endswith("\n"):
-            out += "\n"
     return out
 
 
