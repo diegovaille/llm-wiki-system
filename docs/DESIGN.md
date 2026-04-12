@@ -780,10 +780,14 @@ Every core command honors this contract. Adapters can rely on it.
 
 **Explicitly out of v0.1:**
 - `wiki bootstrap` (v0.2)
-- `wiki sync` and hooks (v0.2)
+- `wiki sync` hook-driven triggers (v0.2) — **manual `wiki sync` landed early in v0.1.1**, see below
 - `cross-project/` subtree beyond an empty scaffold
 - Direct LLM mode (v0.3)
 - Codex adapter (v0.3+)
+
+**v0.1.1 addendum — manual `wiki sync`:**
+
+The core of Section 6.5's `wiki sync` shipped in v0.1.1 as a manually-invoked command (no hooks, no event argument). It walks `[[projects]] source_globs`, creates `state: raw` staged files per matched artifact (inline under `inline_threshold_bytes`, pointer otherwise), dedupes by `source_artifact` path, and supports `--path <subtree>` scoping plus `--force` to re-stage. This is the operational bridge between existing repo docs and the capture loop; full hook-driven automation remains v0.2. The `/wiki-capture --from-staged=<path>` branch on the Claude adapter handles the downstream upgrade-to-proposed step.
 
 **Why start with hand-written pages instead of `bootstrap`:**
 - Forces a firsthand feel for the schema

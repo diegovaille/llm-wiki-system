@@ -19,6 +19,7 @@ from wiki_system.init import run_init
 from wiki_system.promote import PromoteRejection, promote as promote_op
 from wiki_system.query import run_query
 from wiki_system.review import list_review_queue
+from wiki_system.sync import run_sync
 
 
 DEFAULT_CONFIG = Path("~/Git/wiki/wiki.config.toml").expanduser()
@@ -371,6 +372,102 @@ def review(ctx: click.Context, project: str) -> None:
     _emit(ctx, payload, _text)
     if not items:
         ctx.exit(3)
+
+
+# ---------- sync ----------
+
+
+@main.command("sync")
+@click.argument("project")
+@click.option(
+    "--path",
+    "path_filter",
+    default=None,
+    help=(
+        "Restrict sync to a repo-relative path prefix (e.g. 'docs/technical/'). "
+        "Matches the path exactly or any file under it. Combined with --force, "
+        "only raw files inside this subtree are affected — unrelated raw items "
+        "are preserved."
+    ),
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Delete existing raw staged files (scoped to --path if given) before "
+        "re-creating them. Default is to skip artifacts that already have a "
+        "raw staged file. Use this to pick up edits to the source files."
+    ),
+)
+@click.option(
+    "--trigger",
+    default="manual",
+    help="Trigger label to record on the raw staged files. Default: manual.",
+)
+@click.pass_context
+def sync_cmd(
+    ctx: click.Context,
+    project: str,
+    path_filter: str | None,
+    force: bool,
+    trigger: str,
+) -> None:
+    """Register project source_globs as raw staged files.
+
+    Walks `[[projects]] source_globs` from wiki.config.toml and creates one
+    `state: raw` staged file per matched artifact. Inline body for files
+    under `[sync] inline_threshold_bytes`, pointer mode otherwise.
+
+    Downstream loop: `wiki review` shows the queue, `/wiki-capture
+    --from-staged=<path>` upgrades each raw file into a proposed canonical
+    page, `wiki promote` canonicalizes it.
+    """
+    cfg = _load_config_or_die(ctx)
+    project_cfg = _get_project_or_die(ctx, cfg, project)
+    wiki_root = cfg.wiki_root_path()
+    result = run_sync(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        sync_cfg=cfg.sync,
+        path_filter=path_filter,
+        force=force,
+        trigger=trigger,
+    )
+    payload = {
+        "created": [str(p) for p in result.created],
+        "removed": [str(p) for p in result.removed],
+        "skipped": result.skipped,
+        "warnings": result.warnings,
+    }
+
+    def _text(p):
+        lines: list[str] = []
+        if p["removed"]:
+            lines.append(
+                f"Removed {len(p['removed'])} existing raw file(s) (--force):"
+            )
+            for path in p["removed"]:
+                lines.append(f"  - {path}")
+            lines.append("")
+        lines.append(f"Created {len(p['created'])} raw staged file(s):")
+        for path in p["created"]:
+            lines.append(f"  - {path}")
+        if p["skipped"]:
+            lines.append("")
+            lines.append(
+                f"Skipped {len(p['skipped'])} artifact(s) already staged "
+                "(pass --force to re-create):"
+            )
+            for src in p["skipped"]:
+                lines.append(f"  - {src}")
+        if p["warnings"]:
+            lines.append("")
+            lines.append(f"Warnings ({len(p['warnings'])}):")
+            for w in p["warnings"]:
+                lines.append(f"  - {w}")
+        return "\n".join(lines)
+
+    _emit(ctx, payload, _text)
 
 
 # ---------- init ----------

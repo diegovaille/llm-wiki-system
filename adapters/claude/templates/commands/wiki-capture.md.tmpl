@@ -10,10 +10,16 @@ Below, `WIKI` refers to that absolute invocation.
 
 Auto-chain: `WIKI capture prepare` → Claude produces proposal → `WIKI capture submit` → `WIKI promote --apply`.
 
-Steps:
+## Two modes
+
+**Session-origin mode** (default): the proposal comes from what just happened in this session — a decision, pattern, or lesson the user wants captured. `$ARGUMENTS` is used as free-text session notes.
+
+**Staged-upgrade mode**: `$ARGUMENTS` is a path ending in `.md` under `{{WIKI_DATA_ROOT}}/<project>/staging/`. The staged file is already in the queue (from `wiki sync` or a manual drop), and this command upgrades it from `state: raw` to `state: proposed`. Detect this by checking whether `$ARGUMENTS` is a path to an existing file under staging; branch accordingly.
+
+## Session-origin steps
 
 1. Detect the project name from the current repo path.
-2. Collect session notes: the most relevant recent assistant turns plus any `$ARGUMENTS`.
+2. Collect session notes: the most relevant recent assistant turns plus `$ARGUMENTS`.
 3. Run: `WIKI capture prepare --project=<name> --session-notes=-` piping the notes in.
 4. The prompt package will be emitted as JSON on stdout. Read it and produce a structured proposal matching its `schema` and `allowed_actions`. The proposal is a JSON document:
    ```json
@@ -62,9 +68,27 @@ Steps:
    - Exit 0: canonical page written. Report the page path.
    - Anything else: tell the user the proposal was staged but promote failed. The staged file is preserved at `<staging_path>`. They can retry with `/wiki-promote <staging_path>` or review via `/wiki-review`. Do not delete or retry silently.
 
-Hard rules:
+## Staged-upgrade steps (when `$ARGUMENTS` is a staging-file path)
 
-- Propose at most ONE canonical change.
+Use this branch when the user passes a path under `{{WIKI_DATA_ROOT}}/<project>/staging/` — the raw staged file was created by `wiki sync` (or manually) and needs to be distilled into a canonical page.
+
+1. Verify the path exists and is under `{{WIKI_DATA_ROOT}}/<project>/staging/`.
+2. Run: `WIKI capture prepare --project=<name> --from-staged=<path>`. No session notes. The prompt package returned will contain the artifact content (inline, or re-read from `source_artifact` if the raw file was pointer-mode).
+3. Read the package. Synthesize a proposal for ONE canonical page that distills the artifact. The proposal's `canonical_page.frontmatter.sources` **MUST** include the original `source_artifact` from the raw file (visible in the prompt package's context). Do NOT add a `session:` source — this is staged-upgrade mode, not session-origin.
+4. Show the user a 3-line summary and ask to confirm. When in doubt, prefer a conservative update of an existing page over creating a new one — check `wiki query` for adjacent pages first.
+5. Write the proposal JSON to a tmpfile (same heredoc-avoidance pattern as session-origin step 6), then run:
+   ```bash
+   WIKI capture submit --project=<name> --from-staged=<original-raw-path> --proposal=/tmp/wiki_proposal.json
+   ```
+   Note the `--from-staged` flag on submit too — this is what tells `submit_capture` to archive the raw file after writing the proposed one.
+   - Exit 0: the raw file is gone, a new proposed file is in its place. Extract `staging_path` from the JSON output.
+   - Exit 2: schema invalid or the proposal's sources don't include the original `source_artifact`. Show the error and stop.
+6. Auto-chain promote: `WIKI promote <project> <staging_path> --apply`. Same exit-code semantics as session-origin step 7.
+
+## Hard rules
+
+- Propose at most ONE canonical change per invocation.
 - Bias hard toward noop and update; create only when no existing page covers the topic.
 - Session-origin proposals MUST include `session:<YYYY-MM-DD>-<slug>` in `canonical_page.frontmatter.sources`.
+- Staged-upgrade proposals MUST include the original `source_artifact` from the raw file in `canonical_page.frontmatter.sources`.
 - For `action: update`, `target_page_id` and `canonical_page.frontmatter.id` MUST be identical.
