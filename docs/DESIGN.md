@@ -2,10 +2,14 @@
 title: wiki-system — Design
 status: draft
 date: 2026-04-12
-owner: diegovaille
 ---
 
 # wiki-system — Design
+
+> **Status:** This is the authoritative v0.1 design. The project names used
+> below (`project-alpha`, `project-beta`, `project-gamma`) and id prefixes
+> (`pa-`, `pb-`) are illustrative. Absolute paths like `~/Git/wiki/` are the
+> default layout but can be overridden via `wiki.config.toml`.
 
 ## 1. Purpose
 
@@ -119,7 +123,7 @@ The core is Python, `src/`-layout, `uv`-managed. Python was chosen for filesyste
 ~/Git/wiki/
 ├── wiki.config.toml                  # local config
 ├── .gitignore
-├── luminavine/
+├── project-alpha/
 │   ├── meta/
 │   │   └── project.md                # project intent + what belongs here
 │   ├── pages/                        # canonical compiled knowledge
@@ -133,9 +137,9 @@ The core is Python, `src/`-layout, `uv`-managed. Python was chosen for filesyste
 │       ├── index.md                  # lightweight project map (session-start)
 │       ├── by-type.md                # generated
 │       └── by-domain.md              # generated
-├── classcloud/
+├── project-beta/
 │   └── <same shape>
-├── financeiro/
+├── project-gamma/
 │   └── <same shape>
 └── cross-project/
     ├── meta/
@@ -160,22 +164,22 @@ The core is Python, `src/`-layout, `uv`-managed. Python was chosen for filesyste
 
 ```yaml
 ---
-id: cc-moderation-system            # slug, unique within project
-title: ClassCloud Moderation System
+id: pb-moderation-system            # slug, unique within project
+title: Project Beta Moderation System
 summary: End-to-end overview of moderation architecture, policy config, and routing.
 type: system                        # see page types below
-project: classcloud                 # kept even inside project subtree
+project: project-beta                 # kept even inside project subtree
 domains: [moderation, policy, safety]
 status: active                      # active|superseded|draft
-superseded_by: cc-moderation-v2     # optional, when status == superseded
+superseded_by: pb-moderation-v2     # optional, when status == superseded
 aliases: ["moderation engine", "content moderation"]
 sources:                            # audit trail (future-proof naming)
   - docs/content-moderation-engine.md
   - docs/superpowers/specs/2026-04-01-moderation-rule-catalog-design.md
   - linear:CC-482                   # future: non-doc sources allowed
 related:                            # CURATED edges
-  - cc-dynamic-policy-prompt-builder
-  - cc-incident-routing
+  - pb-dynamic-policy-prompt-builder
+  - pb-incident-routing
 updated_at: 2026-04-12
 confidence: high                    # high|medium|low
 ---
@@ -243,11 +247,11 @@ upgraded_from:                      # present when capture upgraded a raw file
   source_artifact: docs/superpowers/specs/2026-04-12-foo-design.md
 canonical_page:
   frontmatter:
-    id: lv-story-pipeline
-    title: LuminaVine Story Pipeline
+    id: pa-story-pipeline
+    title: Project Alpha Story Pipeline
     summary: End-to-end view of story creation, review, and publication.
     type: system
-    project: luminavine
+    project: project-alpha
     domains: [pipeline, generation, review]
     status: active
     aliases: ["story pipeline", "story flow"]
@@ -257,7 +261,7 @@ canonical_page:
     updated_at: 2026-04-12
     confidence: high
   body: |
-    # LuminaVine Story Pipeline
+    # Project Alpha Story Pipeline
 
     The pipeline consists of three stages: authoring, illustration,
     and review. Each stage is operated by a distinct service...
@@ -373,10 +377,10 @@ There is no `tags:` field. Ranking signals reference only fields that exist in t
 ```json
 [
   {
-    "id": "cc-moderation-system",
-    "title": "ClassCloud Moderation System",
+    "id": "pb-moderation-system",
+    "title": "Project Beta Moderation System",
     "summary": "End-to-end overview…",
-    "path": "classcloud/pages/cc-moderation-system.md",
+    "path": "project-beta/pages/cc-moderation-system.md",
     "score": 0.87,
     "matched_fields": ["title", "domains"],
     "match_source": "lexical",
@@ -550,16 +554,16 @@ model = "claude-opus-4-6"
 api_key_env = "ANTHROPIC_API_KEY"
 
 [[projects]]
-name = "luminavine"
-repo_path = "~/Git/ai-bible-project"
+name = "project-alpha"
+repo_path = "~/Git/project-alpha"
 source_globs = [
   "docs/**/*.md",
   "prompts/**/*.md",
 ]
 
 [[projects]]
-name = "classcloud"
-repo_path = "~/Git/classcloud"
+name = "project-beta"
+repo_path = "~/Git/project-beta"
 source_globs = [
   "docs/**/*.md",
   "docs/superpowers/specs/**/*.md",
@@ -771,7 +775,7 @@ Every core command honors this contract. Adapters can rely on it.
 - Core generative op: `capture` (prepare/submit, agent mode only)
 - Claude adapter: `wiki` skill, `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`
 - Config: `wiki.config.toml` with agent mode; direct mode stubbed but not implemented
-- Data: `~/Git/wiki/` as a real git repo, **one project tracked: LuminaVine**
+- Data: `~/Git/wiki/` as a real git repo, **one project tracked: Project Alpha**
 - Seed content: hand-written canonical pages **and** hand-written staging items, so `/wiki-review` and `/wiki-promote` can be exercised realistically before hooks exist
 
 **Explicitly out of v0.1:**
@@ -786,11 +790,11 @@ Every core command honors this contract. Adapters can rely on it.
 - Surfaces frontmatter friction before an LLM amplifies it
 - Guarantees `bootstrap` in v0.2 imitates a proven pattern rather than inventing one
 
-**Why LuminaVine first (not ClassCloud):**
+**Why Project Alpha first (not Project Beta):**
 - Richer existing docs and clearer domain boundaries
 - Less risk of policy/process noise overwhelming the schema
 - More forgiving if the first schema is slightly imperfect
-- ClassCloud is the better stress test for v0.2 once the core has earned trust
+- Project Beta is the better stress test for v0.2 once the core has earned trust
 
 **Seed page composition (v0.1 must include at least one of each):**
 - One `type: system` page
@@ -803,14 +807,14 @@ This mix pressure-tests the schema across structurally different page shapes.
 
 All four must hold before the v0.1 milestone is closed:
 
-1. **Query loop works end-to-end.** `/wiki-query "how does the story pipeline work"` in a LuminaVine session returns relevant pages with match reasons, and Claude reads the top result via `Read`.
+1. **Query loop works end-to-end.** `/wiki-query "how does the story pipeline work"` in a Project Alpha session returns relevant pages with match reasons, and Claude reads the top result via `Read`.
 2. **Capture loop works end-to-end.** `/wiki-capture` after making a session decision produces one proposal (noop/update/create). On approval, the page is written and `wiki index` regenerates views.
 3. **Review and promote loop works end-to-end.** `/wiki-review` shows the staging queue; `/wiki-promote` moves a staged file into `pages/` with the diff shown before apply.
 4. **Core CLI works standalone.** `wiki query <project> "..."` returns JSON on stdout with no adapter involved. This proves the agent-agnostic contract.
 
 ### v0.1 retrieval quality bar
 
-Before declaring v0.1 complete, define and run a 10-question benchmark for LuminaVine:
+Before declaring v0.1 complete, define and run a 10-question benchmark for Project Alpha:
 
 - Pick 10 known questions with a known "right" canonical page
 - Run `wiki query` for each
@@ -822,7 +826,7 @@ If the bar is missed, the fix is schema/ranking adjustment, not adding semantic 
 
 - `wiki bootstrap` (agent mode) with phased passes
 - `wiki sync` and the first hook class (`post-spec`)
-- Track ClassCloud as the second project
+- Track Project Beta as the second project
 - Populate `cross-project/` with the first 1-2 synthesis pages
 - Migrate some hand-written seed pages to `bootstrap`-generated versions to confirm comparable quality
 
@@ -830,7 +834,7 @@ If the bar is missed, the fix is schema/ranking adjustment, not adding semantic 
 
 - Direct LLM mode for batch/standalone use
 - Additional hook classes (`post-adr`, `post-runbook`) via path-class config
-- Track financeiro as the third project
+- Track project-gamma as the third project
 - Public README, install docs, license choice (MIT or Apache-2)
 - Stretch: Codex adapter — validates the agent-agnostic abstraction
 
@@ -866,7 +870,7 @@ No tests call the Anthropic API. Generative ops are tested by fixture proposals,
 3. **Codex adapter specifics** — deferred until Claude adapter is stable in v0.2.
 4. **`cross-project/` synthesis authoring workflow** — deferred until v0.2. The subtree exists in v0.1 as an empty scaffold only.
 5. **`/wiki-review` UI richness** — v0.1 ships a minimal list; improvements deferred based on real use.
-6. **Seed question authoring process for new projects** — v0.2 should document a lightweight "how to write good seed questions" guide based on lessons from LuminaVine's v0.1 run.
+6. **Seed question authoring process for new projects** — v0.2 should document a lightweight "how to write good seed questions" guide based on lessons from Project Alpha's v0.1 run.
 
 ## 15. Risks
 
