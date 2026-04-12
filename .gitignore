@@ -8,3 +8,16 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+uv.lock
+
+# Local dev permissions file is machine-specific; users start from
+# .claude/settings.local.example.json and adapt for their own layout.
+.claude/settings.local.json
+
+# Generated adapter artifacts with resolved local paths; produced by
+# `wiki init` and intentionally not committed.
+adapters/claude/_generated/
+
+# IDE
+.idea/
+.vscode/
