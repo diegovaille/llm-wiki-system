@@ -4,9 +4,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from wiki_system.config import RetrievalConfig
-from wiki_system.index import IndexData, PageMeta, load_index
+from wiki_system.index import PageMeta, load_index
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
@@ -20,7 +21,7 @@ class QueryResult:
     path: str
     score: float
     matched_fields: list[str]
-    match_source: str  # "lexical" | "graph"
+    match_source: Literal["lexical", "graph"]
     reasons: list[str]
     snippet: str
 
@@ -87,14 +88,14 @@ def _score_lexical(
 
 
 def _snippet_for(page: PageMeta, q_tokens: set[str]) -> str:
-    lines = [l for l in page.body.splitlines() if l.strip()]
+    lines = [line for line in page.body.splitlines() if line.strip()]
     if not lines:
         return page.summary or ""
     # Prefer a line containing a query token
-    for l in lines:
-        toks = set(_tokenize(l))
+    for line in lines:
+        toks = set(_tokenize(line))
         if q_tokens & toks:
-            return l.strip()[:180]
+            return line.strip()[:180]
     return lines[0].strip()[:180]
 
 

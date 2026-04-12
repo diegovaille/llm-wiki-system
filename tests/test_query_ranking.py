@@ -96,10 +96,11 @@ def test_inferred_edge_distinct_from_curated(wiki_root: Path):
     results = run_query(wiki_root, "luminavine", "alpha", RetrievalConfig(), limit=5)
     ids = [r.id for r in results]
     assert "lv-alpha" in ids
-    # Beta should appear via inferred source-overlap edge
-    if "lv-beta" in ids:
-        beta = next(r for r in results if r.id == "lv-beta")
-        assert beta.match_source == "graph"
+    # Beta must appear via the bidirectional inferred_source edge.
+    assert "lv-beta" in ids
+    beta = next(r for r in results if r.id == "lv-beta")
+    assert beta.match_source == "graph"
+    assert any("inferred" in reason for reason in beta.reasons)
 
 
 def test_results_carry_reasons_and_snippet(wiki_root: Path):
