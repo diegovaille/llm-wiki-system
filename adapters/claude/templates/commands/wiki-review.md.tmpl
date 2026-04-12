@@ -4,11 +4,11 @@ description: List pending staged items in the wiki and offer to promote or upgra
 ---
 
 **Binary (absolute path — NOT on PATH):**
-`/Users/diegovaille/Git/wiki-system/.venv/bin/wiki --config /Users/diegovaille/Git/wiki/wiki.config.toml`
+`{{WIKI_CMD}}`
 
 Below, `WIKI` refers to that absolute invocation.
 
-This command is a pure formatter around `WIKI review`. The core command owns all schema-aware filesystem logic. Do not list `/Users/diegovaille/Git/wiki/<project>/staging/*.md` by hand — always go through `WIKI review`.
+This command is a pure formatter around `WIKI review`. The core command owns all schema-aware filesystem logic. Do not list `{{WIKI_DATA_ROOT}}/<project>/staging/*.md` by hand — always go through `WIKI review`.
 
 Steps:
 

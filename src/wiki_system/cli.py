@@ -15,6 +15,7 @@ from wiki_system.capture import (
 )
 from wiki_system.config import WikiConfig, load_config
 from wiki_system.index import build_index, render_views, save_index
+from wiki_system.init import run_init
 from wiki_system.promote import PromoteRejection, promote as promote_op
 from wiki_system.query import run_query
 from wiki_system.review import list_review_queue
@@ -328,6 +329,112 @@ def review(ctx: click.Context, project: str) -> None:
     _emit(ctx, payload, _text)
     if not items:
         ctx.exit(3)
+
+
+# ---------- init ----------
+
+
+@main.command("init")
+@click.option(
+    "--wiki-system-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to the wiki-system checkout. Defaults to the package's own "
+    "parent (derived from this file's location).",
+)
+@click.option(
+    "--wiki-data-root",
+    type=click.Path(path_type=Path),
+    default=Path("~/Git/wiki"),
+    help="Path to the wiki data repo. Defaults to ~/Git/wiki.",
+)
+@click.option(
+    "--agents-dir",
+    type=click.Path(path_type=Path),
+    default=Path("~/.agents"),
+    help="Shared-agent canonical directory. Skills and commands are "
+    "installed here so any agent framework that discovers ~/.agents/ "
+    "can pick them up. Defaults to ~/.agents.",
+)
+@click.option(
+    "--claude-dir",
+    type=click.Path(path_type=Path),
+    default=Path("~/.claude"),
+    help="Claude Code config directory. wiki init creates symlinks here "
+    "pointing back at the canonical files under --agents-dir. Defaults "
+    "to ~/.claude.",
+)
+@click.pass_context
+def init_cmd(
+    ctx: click.Context,
+    wiki_system_root: Path | None,
+    wiki_data_root: Path,
+    agents_dir: Path,
+    claude_dir: Path,
+) -> None:
+    """Generate per-machine adapter artifacts with resolved local paths.
+
+    Writes canonical rendered skill + slash commands under --agents-dir
+    (shared across agent frameworks) and symlinks them into --claude-dir
+    so Claude Code discovers them. Seeds a wiki.config.toml from the
+    example if the wiki data repo is empty. Prints a permissions snippet
+    for your Claude settings. Idempotent — re-run after template edits.
+    """
+    if wiki_system_root is None:
+        wiki_system_root = Path(__file__).resolve().parent.parent.parent
+    result = run_init(
+        wiki_system_root=wiki_system_root,
+        wiki_data_root=wiki_data_root,
+        agents_dir=agents_dir,
+        claude_dir=claude_dir,
+    )
+    payload = {
+        "rendered": [str(p) for p in result.rendered],
+        "symlinks": [
+            {"link": str(link), "target": str(target)}
+            for link, target in result.symlinks
+        ],
+        "seeded_config": (
+            str(result.seeded_config) if result.seeded_config else None
+        ),
+        "permissions_snippet": result.permissions_snippet,
+    }
+
+    def _text(p):
+        lines = [f"Rendered {len(p['rendered'])} canonical file(s):"]
+        for path in p["rendered"]:
+            lines.append(f"  - {path}")
+        if p["symlinks"]:
+            lines.append("")
+            lines.append(
+                f"Created {len(p['symlinks'])} Claude Code symlink(s):"
+            )
+            for link in p["symlinks"]:
+                lines.append(f"  - {link['link']} -> {link['target']}")
+        if p["seeded_config"]:
+            lines.append("")
+            lines.append(
+                f"Seeded wiki.config.toml at: {p['seeded_config']}"
+            )
+            lines.append(
+                "Edit it and add a [[projects]] block for each codebase "
+                "you want wiki-enabled."
+            )
+        lines.append("")
+        lines.append(
+            "Add this to ~/.claude/settings.json (merge with any existing "
+            "permissions.allow list):"
+        )
+        lines.append("")
+        lines.append(p["permissions_snippet"])
+        lines.append("")
+        lines.append(
+            "Then start a new Claude Code session and type `/wiki` to see "
+            "the available slash commands."
+        )
+        return "\n".join(lines)
+
+    _emit(ctx, payload, _text)
 
 
 if __name__ == "__main__":

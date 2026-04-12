@@ -1,0 +1,13 @@
+## Wiki
+
+Compiled project knowledge for this project lives at `{{WIKI_DATA_ROOT}}/<project>/`.
+
+- **Wiki binary (absolute path — NOT on PATH):**
+  `{{WIKI_CMD}}`
+- **Start-of-session orientation** (when a task is wiki-relevant): read `{{WIKI_DATA_ROOT}}/<project>/views/index.md` — it's a regenerated map of all canonical pages by type.
+- **`/wiki-query <question>`** — search compiled knowledge before falling back to `docs/`.
+- **`/wiki-capture`** — distill a session learning into at most one canonical change. Default to noop; prefer update over create. Never invoke autonomously mid-session.
+- **`/wiki-review`** — see pending staged items.
+- **`/wiki-promote <path>`** — apply a proposed staged file after dry-run.
+
+Never edit `{{WIKI_DATA_ROOT}}/<project>/pages/*.md` or `views/*.md` directly. Never ad-hoc `grep`/`rg` into `{{WIKI_DATA_ROOT}}/` — always go through `wiki query`.
