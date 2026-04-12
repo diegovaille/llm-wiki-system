@@ -14,11 +14,11 @@ def _valid_proposal() -> dict:
         "rationale": "test",
         "canonical_page": {
             "frontmatter": {
-                "id": "lv-foo",
+                "id": "demo-foo",
                 "title": "Foo",
                 "summary": "",
                 "type": "system",
-                "project": "luminavine",
+                "project": "demo",
                 "domains": ["pipeline"],
                 "status": "active",
                 "aliases": [],
@@ -35,11 +35,11 @@ def _valid_proposal() -> dict:
 def test_submit_then_failing_promote_preserves_staged_file(wiki_root: Path):
     # Write an existing page with same id so create collides and promote fails
     existing = PageFrontmatter(
-        id="lv-foo",
+        id="demo-foo",
         title="Existing Foo",
         summary="",
         type=PageType.SYSTEM,
-        project="luminavine",
+        project="demo",
         domains=["pipeline"],
         status=PageStatus.ACTIVE,
         aliases=[],
@@ -48,12 +48,12 @@ def test_submit_then_failing_promote_preserves_staged_file(wiki_root: Path):
         updated_at=date(2026, 4, 12),
         confidence=Confidence.HIGH,
     )
-    write_page(wiki_root, "luminavine", existing, "# Existing\n")
+    write_page(wiki_root, "demo", existing, "# Existing\n")
 
     # submit succeeds — staged file is written
     result = submit_capture(
         wiki_root,
-        project="luminavine",
+        project="demo",
         proposal=_valid_proposal(),
         from_staged=None,
     )
@@ -63,17 +63,17 @@ def test_submit_then_failing_promote_preserves_staged_file(wiki_root: Path):
 
     # simulated auto-chain: promote --apply fails because id collides
     try:
-        promote(wiki_root, "luminavine", staged_path, apply=True)
+        promote(wiki_root, "demo", staged_path, apply=True)
     except Exception:
         pass  # expected
 
     # staged file is still present and remains promotable on retry
-    staged = list_staged(wiki_root, "luminavine")
+    staged = list_staged(wiki_root, "demo")
     assert staged_path in staged
 
     # The user could retry; promote should still cleanly reject, and staged file survives.
     try:
-        promote(wiki_root, "luminavine", staged_path, apply=True)
+        promote(wiki_root, "demo", staged_path, apply=True)
     except Exception:
         pass
     assert staged_path.exists()

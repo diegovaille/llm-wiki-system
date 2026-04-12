@@ -15,7 +15,7 @@ def _mk(wiki_root: Path, id_: str, *, title: str | None = None, domains: list[st
         title=title or id_.replace("-", " ").title(),
         summary=f"Summary for {id_}",
         type=type_,
-        project="luminavine",
+        project="demo",
         domains=domains or [],
         status=PageStatus.ACTIVE,
         aliases=aliases or [],
@@ -24,89 +24,89 @@ def _mk(wiki_root: Path, id_: str, *, title: str | None = None, domains: list[st
         updated_at=date(2026, 4, 12),
         confidence=Confidence.HIGH,
     )
-    write_page(wiki_root, "luminavine", fm, body or f"# {id_}\n\nBody.\n")
+    write_page(wiki_root, "demo", fm, body or f"# {id_}\n\nBody.\n")
 
 
 def _index(wiki_root: Path):
-    idx = build_index(wiki_root, "luminavine")
-    save_index(wiki_root, "luminavine", idx)
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
     return idx
 
 
 def test_empty_index_returns_no_results(wiki_root: Path):
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "anything", RetrievalConfig(), limit=5)
+    results = run_query(wiki_root, "demo", "anything", RetrievalConfig(), limit=5)
     assert results == []
 
 
 def test_exact_title_match_ranks_highest(wiki_root: Path):
-    _mk(wiki_root, "lv-story-pipeline", title="Story Pipeline")
-    _mk(wiki_root, "lv-unrelated", title="Unrelated")
+    _mk(wiki_root, "demo-story-pipeline", title="Story Pipeline")
+    _mk(wiki_root, "demo-unrelated", title="Unrelated")
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "story pipeline", RetrievalConfig(), limit=5)
-    assert results[0].id == "lv-story-pipeline"
+    results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
+    assert results[0].id == "demo-story-pipeline"
     assert "title" in results[0].matched_fields
     assert results[0].match_source == "lexical"
 
 
 def test_alias_match_scores_highly(wiki_root: Path):
-    _mk(wiki_root, "lv-moderation", title="Moderation System", aliases=["content moderation"])
-    _mk(wiki_root, "lv-other", title="Other Thing")
+    _mk(wiki_root, "demo-moderation", title="Moderation System", aliases=["content moderation"])
+    _mk(wiki_root, "demo-other", title="Other Thing")
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "content moderation", RetrievalConfig(), limit=5)
-    assert results[0].id == "lv-moderation"
+    results = run_query(wiki_root, "demo", "content moderation", RetrievalConfig(), limit=5)
+    assert results[0].id == "demo-moderation"
     assert "aliases" in results[0].matched_fields
 
 
 def test_domain_match_contributes(wiki_root: Path):
-    _mk(wiki_root, "lv-alpha", title="Alpha", domains=["pipeline"])
-    _mk(wiki_root, "lv-beta", title="Beta", domains=["unrelated"])
+    _mk(wiki_root, "demo-alpha", title="Alpha", domains=["pipeline"])
+    _mk(wiki_root, "demo-beta", title="Beta", domains=["unrelated"])
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "pipeline", RetrievalConfig(), limit=5)
-    assert results[0].id == "lv-alpha"
+    results = run_query(wiki_root, "demo", "pipeline", RetrievalConfig(), limit=5)
+    assert results[0].id == "demo-alpha"
     assert "domains" in results[0].matched_fields
 
 
 def test_body_token_match_contributes(wiki_root: Path):
-    _mk(wiki_root, "lv-alpha", title="Alpha", body="# Alpha\n\nThe moderation engine handles...\n")
-    _mk(wiki_root, "lv-beta", title="Beta", body="# Beta\n\nUnrelated content.\n")
+    _mk(wiki_root, "demo-alpha", title="Alpha", body="# Alpha\n\nThe moderation engine handles...\n")
+    _mk(wiki_root, "demo-beta", title="Beta", body="# Beta\n\nUnrelated content.\n")
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "moderation engine", RetrievalConfig(), limit=5)
-    assert results[0].id == "lv-alpha"
+    results = run_query(wiki_root, "demo", "moderation engine", RetrievalConfig(), limit=5)
+    assert results[0].id == "demo-alpha"
     assert "body" in results[0].matched_fields
 
 
 def test_curated_edge_expansion_returns_1_hop_neighbors(wiki_root: Path):
-    _mk(wiki_root, "lv-alpha", title="Alpha", related=["lv-beta"], domains=["pipeline"])
-    _mk(wiki_root, "lv-beta", title="Beta", domains=["unrelated"])
+    _mk(wiki_root, "demo-alpha", title="Alpha", related=["demo-beta"], domains=["pipeline"])
+    _mk(wiki_root, "demo-beta", title="Beta", domains=["unrelated"])
     _index(wiki_root)
     # Query matches alpha by title; beta should come along via curated edge.
-    results = run_query(wiki_root, "luminavine", "alpha", RetrievalConfig(), limit=5)
+    results = run_query(wiki_root, "demo", "alpha", RetrievalConfig(), limit=5)
     ids = [r.id for r in results]
-    assert "lv-alpha" in ids
-    assert "lv-beta" in ids
-    beta = next(r for r in results if r.id == "lv-beta")
+    assert "demo-alpha" in ids
+    assert "demo-beta" in ids
+    beta = next(r for r in results if r.id == "demo-beta")
     assert beta.match_source == "graph"
 
 
 def test_inferred_edge_distinct_from_curated(wiki_root: Path):
-    _mk(wiki_root, "lv-alpha", title="Alpha", sources=["docs/shared.md"])
-    _mk(wiki_root, "lv-beta", title="Beta", sources=["docs/shared.md"])
+    _mk(wiki_root, "demo-alpha", title="Alpha", sources=["docs/shared.md"])
+    _mk(wiki_root, "demo-beta", title="Beta", sources=["docs/shared.md"])
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "alpha", RetrievalConfig(), limit=5)
+    results = run_query(wiki_root, "demo", "alpha", RetrievalConfig(), limit=5)
     ids = [r.id for r in results]
-    assert "lv-alpha" in ids
+    assert "demo-alpha" in ids
     # Beta must appear via the bidirectional inferred_source edge.
-    assert "lv-beta" in ids
-    beta = next(r for r in results if r.id == "lv-beta")
+    assert "demo-beta" in ids
+    beta = next(r for r in results if r.id == "demo-beta")
     assert beta.match_source == "graph"
     assert any("inferred" in reason for reason in beta.reasons)
 
 
 def test_results_carry_reasons_and_snippet(wiki_root: Path):
-    _mk(wiki_root, "lv-story-pipeline", title="Story Pipeline", body="# Story Pipeline\n\nThree stages.\n")
+    _mk(wiki_root, "demo-story-pipeline", title="Story Pipeline", body="# Story Pipeline\n\nThree stages.\n")
     _index(wiki_root)
-    results = run_query(wiki_root, "luminavine", "story", RetrievalConfig(), limit=5)
+    results = run_query(wiki_root, "demo", "story", RetrievalConfig(), limit=5)
     r = results[0]
     assert r.reasons, "expected non-empty reasons"
     assert r.snippet, "expected non-empty snippet"

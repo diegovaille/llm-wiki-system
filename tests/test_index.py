@@ -17,7 +17,7 @@ def _write_page(wiki_root: Path, id_: str, *, related: list[str] | None = None, 
         title=id_.replace("-", " ").title(),
         summary=f"Summary for {id_}",
         type=type_,
-        project="luminavine",
+        project="demo",
         domains=domains or ["pipeline"],
         status=PageStatus.ACTIVE,
         aliases=[],
@@ -26,52 +26,52 @@ def _write_page(wiki_root: Path, id_: str, *, related: list[str] | None = None, 
         updated_at=date(2026, 4, 12),
         confidence=Confidence.HIGH,
     )
-    write_page(wiki_root, "luminavine", fm, f"# {id_}\n\n## Heading one\n\nBody.\n")
+    write_page(wiki_root, "demo", fm, f"# {id_}\n\n## Heading one\n\nBody.\n")
 
 
 def test_build_index_single_page(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha")
-    idx = build_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha")
+    idx = build_index(wiki_root, "demo")
     assert isinstance(idx, IndexData)
     assert len(idx.pages) == 1
-    assert idx.pages[0].id == "lv-alpha"
+    assert idx.pages[0].id == "demo-alpha"
 
 
 def test_curated_edges_extracted(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", related=["lv-beta"])
-    _write_page(wiki_root, "lv-beta")
-    idx = build_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha", related=["demo-beta"])
+    _write_page(wiki_root, "demo-beta")
+    idx = build_index(wiki_root, "demo")
     edges = {(e.src, e.dst, e.kind) for e in idx.edges}
-    assert ("lv-alpha", "lv-beta", "curated") in edges
+    assert ("demo-alpha", "demo-beta", "curated") in edges
 
 
 def test_inferred_backlinks_computed(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", related=["lv-beta"])
-    _write_page(wiki_root, "lv-beta")
-    idx = build_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha", related=["demo-beta"])
+    _write_page(wiki_root, "demo-beta")
+    idx = build_index(wiki_root, "demo")
     inferred = {(e.src, e.dst, e.kind) for e in idx.edges if e.kind == "inferred_backlink"}
-    assert ("lv-beta", "lv-alpha", "inferred_backlink") in inferred
+    assert ("demo-beta", "demo-alpha", "inferred_backlink") in inferred
 
 
 def test_inferred_source_overlap_edges(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", sources=["docs/a.md", "docs/b.md"])
-    _write_page(wiki_root, "lv-beta", sources=["docs/b.md"])
-    _write_page(wiki_root, "lv-gamma", sources=["docs/x.md"])
-    idx = build_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha", sources=["docs/a.md", "docs/b.md"])
+    _write_page(wiki_root, "demo-beta", sources=["docs/b.md"])
+    _write_page(wiki_root, "demo-gamma", sources=["docs/x.md"])
+    idx = build_index(wiki_root, "demo")
     overlap = {(e.src, e.dst, e.kind) for e in idx.edges if e.kind == "inferred_source"}
-    assert ("lv-alpha", "lv-beta", "inferred_source") in overlap
-    assert ("lv-beta", "lv-alpha", "inferred_source") in overlap
+    assert ("demo-alpha", "demo-beta", "inferred_source") in overlap
+    assert ("demo-beta", "demo-alpha", "inferred_source") in overlap
     # gamma shares nothing
-    gamma = [e for e in idx.edges if "lv-gamma" in (e.src, e.dst) and e.kind == "inferred_source"]
+    gamma = [e for e in idx.edges if "demo-gamma" in (e.src, e.dst) and e.kind == "inferred_source"]
     assert gamma == []
 
 
 def test_save_and_load_index_round_trip(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", related=["lv-beta"])
-    _write_page(wiki_root, "lv-beta")
-    idx = build_index(wiki_root, "luminavine")
-    save_index(wiki_root, "luminavine", idx)
-    loaded = load_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha", related=["demo-beta"])
+    _write_page(wiki_root, "demo-beta")
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    loaded = load_index(wiki_root, "demo")
     assert [p.id for p in loaded.pages] == [p.id for p in idx.pages]
     assert loaded.pages[0].body == idx.pages[0].body
     assert loaded.built_at == idx.built_at
@@ -79,46 +79,46 @@ def test_save_and_load_index_round_trip(wiki_root: Path):
 
 
 def test_render_views_creates_index_md(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", type_=PageType.SYSTEM)
-    _write_page(wiki_root, "lv-beta", type_=PageType.WORKFLOW)
-    idx = build_index(wiki_root, "luminavine")
-    render_views(wiki_root, "luminavine", idx, repo_path="/tmp/luminavine-repo")
-    index_view = (wiki_root / "luminavine" / "views" / "index.md").read_text()
-    assert "lv-alpha" in index_view
-    assert "lv-beta" in index_view
+    _write_page(wiki_root, "demo-alpha", type_=PageType.SYSTEM)
+    _write_page(wiki_root, "demo-beta", type_=PageType.WORKFLOW)
+    idx = build_index(wiki_root, "demo")
+    render_views(wiki_root, "demo", idx, repo_path="/tmp/demo-repo")
+    index_view = (wiki_root / "demo" / "views" / "index.md").read_text()
+    assert "demo-alpha" in index_view
+    assert "demo-beta" in index_view
     assert "Do not edit by hand" in index_view
 
 
 def test_render_views_is_single_writer(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha")
-    idx = build_index(wiki_root, "luminavine")
-    render_views(wiki_root, "luminavine", idx, repo_path="/tmp/x")
-    view_path = wiki_root / "luminavine" / "views" / "index.md"
+    _write_page(wiki_root, "demo-alpha")
+    idx = build_index(wiki_root, "demo")
+    render_views(wiki_root, "demo", idx, repo_path="/tmp/x")
+    view_path = wiki_root / "demo" / "views" / "index.md"
     view_path.write_text("HAND EDITED — should be overwritten")
-    render_views(wiki_root, "luminavine", idx, repo_path="/tmp/x")
+    render_views(wiki_root, "demo", idx, repo_path="/tmp/x")
     assert "HAND EDITED" not in view_path.read_text()
-    assert "lv-alpha" in view_path.read_text()
+    assert "demo-alpha" in view_path.read_text()
 
 
 def test_heading_extraction(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha")
-    idx = build_index(wiki_root, "luminavine")
-    page_meta = next(p for p in idx.pages if p.id == "lv-alpha")
+    _write_page(wiki_root, "demo-alpha")
+    idx = build_index(wiki_root, "demo")
+    page_meta = next(p for p in idx.pages if p.id == "demo-alpha")
     assert "Heading one" in page_meta.headings
 
 
 def test_self_related_yields_no_curated_edge(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha", related=["lv-alpha"])
-    idx = build_index(wiki_root, "luminavine")
+    _write_page(wiki_root, "demo-alpha", related=["demo-alpha"])
+    idx = build_index(wiki_root, "demo")
     assert all(e.src != e.dst for e in idx.edges)
 
 
 def test_load_index_rejects_stale_schema(wiki_root: Path, tmp_path: Path):
     import json
     import pytest
-    project_dir = wiki_root / "luminavine"
+    project_dir = wiki_root / "demo"
     project_dir.mkdir(parents=True, exist_ok=True)
-    stale = {"schema_version": 0, "project": "luminavine", "built_at": "2026-04-12T00:00:00+00:00", "pages": [], "edges": []}
+    stale = {"schema_version": 0, "project": "demo", "built_at": "2026-04-12T00:00:00+00:00", "pages": [], "edges": []}
     (project_dir / ".wiki-index.json").write_text(json.dumps(stale))
     with pytest.raises(ValueError, match="stale wiki index"):
-        load_index(wiki_root, "luminavine")
+        load_index(wiki_root, "demo")

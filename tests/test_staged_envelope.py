@@ -17,11 +17,11 @@ from wiki_system._yaml import dumps, loads
 
 def _valid_page_fm(**overrides):
     base = {
-        "id": "lv-story-pipeline",
-        "title": "LuminaVine Story Pipeline",
+        "id": "demo-story-pipeline",
+        "title": "Demo Story Pipeline",
         "summary": "End-to-end view.",
         "type": "system",
-        "project": "luminavine",
+        "project": "demo",
         "domains": ["pipeline"],
         "status": "active",
         "aliases": [],
@@ -88,7 +88,7 @@ def test_proposed_create_parses():
         "target_page_id": None,
         "canonical_page": {
             "frontmatter": _valid_page_fm(),
-            "body": "# LuminaVine Story Pipeline\n\nBody content.",
+            "body": "# Demo Story Pipeline\n\nBody content.",
         },
     }
     f = StagedFile.model_validate(data)
@@ -96,7 +96,7 @@ def test_proposed_create_parses():
     assert f.proposed_action == ProposedAction.CREATE.value
     assert f.target_page_id is None
     assert isinstance(f.canonical_page, CanonicalPageEmbed)
-    assert f.canonical_page.frontmatter.id == "lv-story-pipeline"
+    assert f.canonical_page.frontmatter.id == "demo-story-pipeline"
 
 
 def test_proposed_update_parses():
@@ -106,15 +106,15 @@ def test_proposed_update_parses():
         "created_at": "2026-04-12T14:35:00Z",
         "created_by": "capture",
         "proposed_action": "update",
-        "target_page_id": "lv-story-pipeline",
+        "target_page_id": "demo-story-pipeline",
         "canonical_page": {
-            "frontmatter": _valid_page_fm(id="lv-story-pipeline"),
-            "body": "# LuminaVine Story Pipeline\n\nUpdated body.",
+            "frontmatter": _valid_page_fm(id="demo-story-pipeline"),
+            "body": "# Demo Story Pipeline\n\nUpdated body.",
         },
     }
     f = StagedFile.model_validate(data)
     assert f.proposed_action == ProposedAction.UPDATE.value
-    assert f.target_page_id == "lv-story-pipeline"
+    assert f.target_page_id == "demo-story-pipeline"
 
 
 def test_round_trip_byte_identical():

@@ -27,13 +27,13 @@ from wiki_system.storage import (
 )
 
 
-def _page(id_: str = "lv-foo") -> tuple[PageFrontmatter, str]:
+def _page(id_: str = "demo-foo") -> tuple[PageFrontmatter, str]:
     fm = PageFrontmatter(
         id=id_,
         title="Foo",
         summary="",
         type=PageType.SYSTEM,
-        project="luminavine",
+        project="demo",
         domains=["pipeline"],
         status=PageStatus.ACTIVE,
         aliases=[],
@@ -47,7 +47,7 @@ def _page(id_: str = "lv-foo") -> tuple[PageFrontmatter, str]:
 
 def test_write_and_read_page_round_trip(wiki_root: Path):
     fm, body = _page()
-    path = write_page(wiki_root, "luminavine", fm, body)
+    path = write_page(wiki_root, "demo", fm, body)
     assert path.exists()
     loaded_fm, loaded_body = read_page(path)
     assert loaded_fm.id == fm.id
@@ -56,13 +56,13 @@ def test_write_and_read_page_round_trip(wiki_root: Path):
 
 
 def test_list_pages_returns_all_markdown_in_pages_dir(wiki_root: Path):
-    fm, body = _page(id_="lv-alpha")
-    write_page(wiki_root, "luminavine", fm, body)
-    fm2, body2 = _page(id_="lv-beta")
-    write_page(wiki_root, "luminavine", fm2, body2)
-    paths = list_pages(wiki_root, "luminavine")
+    fm, body = _page(id_="demo-alpha")
+    write_page(wiki_root, "demo", fm, body)
+    fm2, body2 = _page(id_="demo-beta")
+    write_page(wiki_root, "demo", fm2, body2)
+    paths = list_pages(wiki_root, "demo")
     assert len(paths) == 2
-    assert {p.stem for p in paths} == {"lv-alpha", "lv-beta"}
+    assert {p.stem for p in paths} == {"demo-alpha", "demo-beta"}
 
 
 def test_write_and_read_staged_raw(wiki_root: Path):
@@ -76,7 +76,7 @@ def test_write_and_read_staged_raw(wiki_root: Path):
         raw_body_mode=RawBodyMode.INLINE,
     )
     body = "Original artifact content."
-    path = write_staged(wiki_root, "luminavine", f, body, slug="post-spec-foo")
+    path = write_staged(wiki_root, "demo", f, body, slug="post-spec-foo")
     assert path.exists()
     loaded_f, loaded_body = read_staged(path)
     assert loaded_f.state == "raw"
@@ -95,10 +95,10 @@ def test_write_and_read_staged_proposed(wiki_root: Path):
         target_page_id=None,
         canonical_page=CanonicalPageEmbed(frontmatter=fm, body=page_body),
     )
-    path = write_staged(wiki_root, "luminavine", f, "", slug="capture-lv-foo")
+    path = write_staged(wiki_root, "demo", f, "", slug="capture-demo-foo")
     loaded_f, _ = read_staged(path)
     assert loaded_f.state == "proposed"
-    assert loaded_f.canonical_page.frontmatter.id == "lv-foo"
+    assert loaded_f.canonical_page.frontmatter.id == "demo-foo"
 
 
 def test_list_staged_returns_all(wiki_root: Path):
@@ -111,40 +111,40 @@ def test_list_staged_returns_all(wiki_root: Path):
         trigger="post-spec",
         raw_body_mode=RawBodyMode.INLINE,
     )
-    write_staged(wiki_root, "luminavine", f, "content", slug="a")
-    write_staged(wiki_root, "luminavine", f.model_copy(update={"source_artifact": "docs/b.md"}), "content", slug="b")
-    paths = list_staged(wiki_root, "luminavine")
+    write_staged(wiki_root, "demo", f, "content", slug="a")
+    write_staged(wiki_root, "demo", f.model_copy(update={"source_artifact": "docs/b.md"}), "content", slug="b")
+    paths = list_staged(wiki_root, "demo")
     assert len(paths) == 2
 
 
 def test_append_manifest_jsonl(wiki_root: Path):
     append_manifest(
         wiki_root,
-        "luminavine",
-        {"id": "lv-foo", "action": "create", "promoted_at": "2026-04-12T15:00:00Z"},
+        "demo",
+        {"id": "demo-foo", "action": "create", "promoted_at": "2026-04-12T15:00:00Z"},
     )
     append_manifest(
         wiki_root,
-        "luminavine",
-        {"id": "lv-bar", "action": "create", "promoted_at": "2026-04-12T15:01:00Z"},
+        "demo",
+        {"id": "demo-bar", "action": "create", "promoted_at": "2026-04-12T15:01:00Z"},
     )
-    manifest = (wiki_root / "luminavine" / "sources" / "manifest.jsonl").read_text()
+    manifest = (wiki_root / "demo" / "sources" / "manifest.jsonl").read_text()
     lines = manifest.strip().split("\n")
     assert len(lines) == 2
-    assert '"id": "lv-foo"' in lines[0]
-    assert '"id": "lv-bar"' in lines[1]
+    assert '"id": "demo-foo"' in lines[0]
+    assert '"id": "demo-bar"' in lines[1]
 
 
 def test_read_page_rejects_unknown_fields(wiki_root: Path, tmp_path: Path):
     # Hand-written file with an unknown field
-    bad = wiki_root / "luminavine" / "pages" / "bad.md"
+    bad = wiki_root / "demo" / "pages" / "bad.md"
     bad.write_text(
         """---
 id: bad
 title: Bad
 summary: ""
 type: system
-project: luminavine
+project: demo
 domains: []
 status: active
 aliases: []

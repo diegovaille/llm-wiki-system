@@ -46,7 +46,7 @@ def test_body_with_yaml_document_separator_is_safe():
     data = {
         "state": "proposed",
         "canonical_page": {
-            "frontmatter": {"id": "lv-story", "title": "Story"},
+            "frontmatter": {"id": "demo-story", "title": "Story"},
             "body": "# Story\n\nOpening paragraph.\n\n---\n\nSection after a thematic break.\n",
         },
     }

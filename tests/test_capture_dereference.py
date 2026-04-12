@@ -32,7 +32,7 @@ def _raw(mode: RawBodyMode) -> StagedFile:
 
 def test_prepare_session_origin(wiki_root: Path, tmp_path: Path):
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(tmp_path / "repo"), source_globs=[]
+        name="demo", repo_path=str(tmp_path / "repo"), source_globs=[]
     )
     (tmp_path / "repo").mkdir()
     pkg = prepare_capture(
@@ -51,10 +51,10 @@ def test_prepare_from_staged_inline_uses_body(wiki_root: Path, tmp_path: Path):
     (repo / "docs").mkdir(parents=True)
     (repo / "docs" / "foo.md").write_text("SOURCE ARTIFACT CONTENT")
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(repo), source_globs=[]
+        name="demo", repo_path=str(repo), source_globs=[]
     )
     sf = _raw(RawBodyMode.INLINE)
-    staged_path = write_staged(wiki_root, "luminavine", sf, "INLINE BODY", slug="inline")
+    staged_path = write_staged(wiki_root, "demo", sf, "INLINE BODY", slug="inline")
     pkg = prepare_capture(
         wiki_root, project_cfg, session_notes=None, from_staged=staged_path
     )
@@ -69,10 +69,10 @@ def test_prepare_from_staged_pointer_reads_source_artifact(
     (repo / "docs").mkdir(parents=True)
     (repo / "docs" / "foo.md").write_text("SOURCE ARTIFACT CONTENT")
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(repo), source_globs=[]
+        name="demo", repo_path=str(repo), source_globs=[]
     )
     sf = _raw(RawBodyMode.POINTER)
-    staged_path = write_staged(wiki_root, "luminavine", sf, "", slug="pointer")
+    staged_path = write_staged(wiki_root, "demo", sf, "", slug="pointer")
     pkg = prepare_capture(
         wiki_root, project_cfg, session_notes=None, from_staged=staged_path
     )
@@ -86,10 +86,10 @@ def test_prepare_from_staged_pointer_missing_artifact_raises(
     (repo / "docs").mkdir(parents=True)
     # no docs/foo.md created
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(repo), source_globs=[]
+        name="demo", repo_path=str(repo), source_globs=[]
     )
     sf = _raw(RawBodyMode.POINTER)
-    staged_path = write_staged(wiki_root, "luminavine", sf, "", slug="pointer-missing")
+    staged_path = write_staged(wiki_root, "demo", sf, "", slug="pointer-missing")
     with pytest.raises(FileNotFoundError, match="cannot dereference"):
         prepare_capture(
             wiki_root, project_cfg, session_notes=None, from_staged=staged_path
@@ -103,15 +103,15 @@ def test_prepare_from_staged_rejects_non_raw_state(wiki_root: Path, tmp_path: Pa
     repo = tmp_path / "repo"
     repo.mkdir()
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(repo), source_globs=[]
+        name="demo", repo_path=str(repo), source_globs=[]
     )
     # Write a state: proposed staged file, then try to prepare_capture against it.
     fm = PageFrontmatter(
-        id="lv-foo",
+        id="demo-foo",
         title="Foo",
         summary="",
         type=PageType.SYSTEM,
-        project="luminavine",
+        project="demo",
         domains=[],
         status=PageStatus.ACTIVE,
         aliases=[],
@@ -129,7 +129,7 @@ def test_prepare_from_staged_rejects_non_raw_state(wiki_root: Path, tmp_path: Pa
         target_page_id=None,
         canonical_page=CanonicalPageEmbed(frontmatter=fm, body="# Foo\n"),
     )
-    staged_path = write_staged(wiki_root, "luminavine", proposed, "", slug="not-raw")
+    staged_path = write_staged(wiki_root, "demo", proposed, "", slug="not-raw")
     with pytest.raises(ValueError, match="state: raw"):
         prepare_capture(
             wiki_root, project_cfg, session_notes=None, from_staged=staged_path
@@ -140,7 +140,7 @@ def test_prepare_package_carries_schema_and_allowed_actions(
     wiki_root: Path, tmp_path: Path
 ):
     project_cfg = ProjectConfig(
-        name="luminavine", repo_path=str(tmp_path), source_globs=[]
+        name="demo", repo_path=str(tmp_path), source_globs=[]
     )
     pkg = prepare_capture(
         wiki_root, project_cfg, session_notes="note", from_staged=None

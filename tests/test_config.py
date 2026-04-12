@@ -20,7 +20,7 @@ runtime = "claude-code"
 model_hint = "opus"
 
 [[projects]]
-name = "luminavine"
+name = "demo"
 repo_path = "~/Git/ai-bible-project"
 source_globs = ["docs/**/*.md"]
 """
@@ -31,7 +31,7 @@ source_globs = ["docs/**/*.md"]
     assert cfg.execution.mode == "agent"
     assert cfg.execution.agent.runtime == "claude-code"
     assert len(cfg.projects) == 1
-    assert cfg.projects[0].name == "luminavine"
+    assert cfg.projects[0].name == "demo"
 
 
 def test_get_project_by_name(tmp_path: Path):
@@ -46,7 +46,7 @@ mode = "agent"
 runtime = "claude-code"
 model_hint = "opus"
 [[projects]]
-name = "luminavine"
+name = "demo"
 repo_path = "~/Git/ai-bible-project"
 source_globs = ["docs/**/*.md"]
 [[projects]]
@@ -74,7 +74,7 @@ mode = "agent"
 runtime = "claude-code"
 model_hint = "opus"
 [[projects]]
-name = "luminavine"
+name = "demo"
 repo_path = "/tmp/x"
 source_globs = []
 """
@@ -101,7 +101,7 @@ runtime = "claude-code"
 model_hint = "opus"
 
 [[projects]]
-name = "luminavine"
+name = "demo"
 repo_path = "/tmp/x"
 source_globs = []
 """

@@ -15,11 +15,11 @@ def _valid_proposal(action: str = "create", target: str | None = None) -> dict:
         "rationale": "Because test.",
         "canonical_page": {
             "frontmatter": {
-                "id": "lv-foo",
+                "id": "demo-foo",
                 "title": "Foo",
                 "summary": "Summary",
                 "type": "system",
-                "project": "luminavine",
+                "project": "demo",
                 "domains": ["pipeline"],
                 "status": "active",
                 "aliases": [],
@@ -36,17 +36,17 @@ def _valid_proposal(action: str = "create", target: str | None = None) -> dict:
 def test_submit_session_origin_create_writes_proposed(wiki_root: Path):
     result = submit_capture(
         wiki_root,
-        project="luminavine",
+        project="demo",
         proposal=_valid_proposal(),
         from_staged=None,
     )
     assert result.action == "create"
-    staged = list_staged(wiki_root, "luminavine")
+    staged = list_staged(wiki_root, "demo")
     assert len(staged) == 1
     sf, _ = read_staged(staged[0])
     assert sf.state == "proposed"
     assert sf.origin == "capture"
-    assert sf.canonical_page.frontmatter.id == "lv-foo"
+    assert sf.canonical_page.frontmatter.id == "demo-foo"
     assert any(s.startswith("session:") for s in sf.canonical_page.frontmatter.sources)
 
 
@@ -55,26 +55,26 @@ def test_submit_session_origin_requires_session_source(wiki_root: Path):
     prop["canonical_page"]["frontmatter"]["sources"] = ["docs/random.md"]
     with pytest.raises(SubmitRejection, match="session:"):
         submit_capture(
-            wiki_root, project="luminavine", proposal=prop, from_staged=None
+            wiki_root, project="demo", proposal=prop, from_staged=None
         )
 
 
 def test_submit_noop_writes_nothing(wiki_root: Path):
     result = submit_capture(
         wiki_root,
-        project="luminavine",
+        project="demo",
         proposal={"action": "noop", "rationale": "nothing worth capturing"},
         from_staged=None,
     )
     assert result.action == "noop"
-    assert list_staged(wiki_root, "luminavine") == []
+    assert list_staged(wiki_root, "demo") == []
 
 
 def test_submit_invalid_proposal_raises(wiki_root: Path):
     with pytest.raises(SubmitRejection):
         submit_capture(
             wiki_root,
-            project="luminavine",
+            project="demo",
             proposal={"action": "create"},  # missing canonical_page
             from_staged=None,
         )
@@ -90,14 +90,14 @@ def test_submit_from_staged_upgrades_raw(wiki_root: Path):
         trigger="post-spec",
         raw_body_mode=RawBodyMode.INLINE,
     )
-    raw_path = write_staged(wiki_root, "luminavine", raw, "ARTIFACT", slug="raw-foo")
+    raw_path = write_staged(wiki_root, "demo", raw, "ARTIFACT", slug="raw-foo")
     prop = _valid_proposal()
     prop["canonical_page"]["frontmatter"]["sources"] = ["docs/foo.md"]
     result = submit_capture(
-        wiki_root, project="luminavine", proposal=prop, from_staged=raw_path
+        wiki_root, project="demo", proposal=prop, from_staged=raw_path
     )
     assert result.action == "create"
-    staged = list_staged(wiki_root, "luminavine")
+    staged = list_staged(wiki_root, "demo")
     # Raw path gone, one proposed file in its place
     assert not raw_path.exists()
     assert len(staged) == 1
@@ -119,11 +119,11 @@ def test_submit_from_staged_upgrade_requires_source_artifact_in_sources(
         trigger="post-spec",
         raw_body_mode=RawBodyMode.INLINE,
     )
-    raw_path = write_staged(wiki_root, "luminavine", raw, "ART", slug="raw-foo2")
+    raw_path = write_staged(wiki_root, "demo", raw, "ART", slug="raw-foo2")
     prop = _valid_proposal()
     # sources lacks docs/foo.md
     prop["canonical_page"]["frontmatter"]["sources"] = ["docs/something-else.md"]
     with pytest.raises(SubmitRejection, match="docs/foo.md"):
         submit_capture(
-            wiki_root, project="luminavine", proposal=prop, from_staged=raw_path
+            wiki_root, project="demo", proposal=prop, from_staged=raw_path
         )
