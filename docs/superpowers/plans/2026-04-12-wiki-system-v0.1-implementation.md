@@ -4884,7 +4884,7 @@ Create `~/Git/wiki/luminavine/staging/2026-04-12-141523-lv-editorial-guardrails.
 ```markdown
 ---
 state: proposed
-origin: manual
+origin: bootstrap
 created_at: 2026-04-12T14:15:23+00:00
 created_by: operator
 proposed_action: create
