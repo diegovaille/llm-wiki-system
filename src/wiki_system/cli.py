@@ -157,7 +157,15 @@ def capture() -> None:
 
 @capture.command("prepare")
 @click.option("--project", required=True)
-@click.option("--session-notes", default=None, help="Path or '-' for stdin")
+@click.option(
+    "--session-notes",
+    default=None,
+    help=(
+        "Path to a plain-text notes file, or '-' to read from stdin. "
+        "For anything beyond a few paragraphs, prefer a file — piping "
+        "large bodies via bash heredoc is fragile."
+    ),
+)
 @click.option(
     "--from-staged",
     default=None,
@@ -177,7 +185,11 @@ def capture_prepare(
     if session_notes == "-":
         notes_text = sys.stdin.read()
     elif session_notes is not None:
-        notes_text = Path(session_notes).read_text()
+        try:
+            notes_text = Path(session_notes).read_text()
+        except FileNotFoundError as e:
+            click.echo(f"session-notes file not found: {e}", err=True)
+            ctx.exit(1)
     try:
         pkg = prepare_capture(
             wiki_root,
@@ -195,7 +207,18 @@ def capture_prepare(
 
 @capture.command("submit")
 @click.option("--project", required=True)
-@click.option("--proposal", required=True, help="Path or '-' for stdin")
+@click.option(
+    "--proposal",
+    required=True,
+    help=(
+        "Path to a proposal JSON file, or '-' to read from stdin. "
+        "For proposals >1KB or with embedded backticks, pipes, or "
+        "backslashes, prefer a file path — shell heredocs silently "
+        "corrupt those characters. Write the JSON with "
+        "`python -c 'import json; json.dump(data, open(path, \"w\"))'` "
+        "and pass --proposal=<path>."
+    ),
+)
 @click.option(
     "--from-staged",
     default=None,
@@ -211,10 +234,29 @@ def capture_submit(
     cfg = _load_config_or_die(ctx)
     _get_project_or_die(ctx, cfg, project)
     wiki_root = cfg.wiki_root_path()
-    if proposal == "-":
-        proposal_data = json.loads(sys.stdin.read())
-    else:
-        proposal_data = json.loads(Path(proposal).read_text())
+    try:
+        if proposal == "-":
+            raw_proposal = sys.stdin.read()
+        else:
+            raw_proposal = Path(proposal).read_text()
+    except FileNotFoundError as e:
+        click.echo(f"proposal file not found: {e}", err=True)
+        ctx.exit(1)
+    try:
+        proposal_data = json.loads(raw_proposal)
+    except json.JSONDecodeError as e:
+        lines = [f"proposal JSON invalid: {e}"]
+        if proposal == "-":
+            lines.append(
+                "Hint: if you piped the proposal via a bash heredoc, the "
+                "shell may have corrupted embedded backticks, pipes, or "
+                "backslashes in the canonical_page.body. Write the JSON "
+                "to a file with "
+                "`python -c 'import json; json.dump(data, open(path, \"w\"))'` "
+                "and pass --proposal=<file-path> instead."
+            )
+        click.echo("\n".join(lines), err=True)
+        ctx.exit(2)
     try:
         result = submit_capture(
             wiki_root,

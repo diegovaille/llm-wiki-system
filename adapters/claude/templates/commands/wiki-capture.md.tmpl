@@ -29,10 +29,35 @@ Steps:
    ```
    For `action: noop`, omit `canonical_page`.
 5. Show the user a 3-line summary and ask to confirm.
-6. On confirmation, run: `WIKI capture submit --project=<name> --proposal=-` piping the proposal in.
+6. On confirmation, write the proposal JSON to a tmpfile and pass the path — **do NOT pipe via bash heredoc**. Heredocs silently corrupt embedded backticks, pipes, and backslashes inside `canonical_page.body`, which fails with a cryptic `JSONDecodeError`. The reliable pattern:
+
+   ```bash
+   python3 -c '
+   import json
+   data = {
+     "action": "create",
+     "target_page_id": None,
+     "rationale": "...",
+     "canonical_page": {
+       "frontmatter": { ... },
+       "body": "...",
+     },
+   }
+   json.dump(data, open("/tmp/wiki_proposal.json", "w"))
+   '
+   WIKI capture submit --project=<name> --proposal=/tmp/wiki_proposal.json
+   ```
+
+   For a noop action (no canonical_page), piping via stdin is fine because the payload is tiny:
+
+   ```bash
+   echo '{"action":"noop","rationale":"nothing captured"}' | WIKI capture submit --project=<name> --proposal=-
+   ```
+
+   Exit codes:
    - Exit 0: a `state: proposed` staged file was written. Extract `staging_path` from the JSON output.
    - Exit 3: `action: noop` — nothing was staged, nothing more to do.
-   - Exit 2: schema invalid — show the error and stop.
+   - Exit 2: schema invalid — show the error from stderr and stop. If the error mentions JSON parsing, you probably piped via heredoc; switch to the tmpfile pattern above.
 7. If a staged file was written, auto-chain promote: `WIKI promote <project> <staging_path> --apply`
    - Exit 0: canonical page written. Report the page path.
    - Anything else: tell the user the proposal was staged but promote failed. The staged file is preserved at `<staging_path>`. They can retry with `/wiki-promote <staging_path>` or review via `/wiki-review`. Do not delete or retry silently.

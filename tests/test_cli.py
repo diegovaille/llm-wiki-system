@@ -192,6 +192,120 @@ def test_cli_capture_submit_noop_exit_3(wiki_root: Path, tmp_path: Path):
     assert r.exit_code == 3, (r.stdout, r.stderr)
 
 
+def test_cli_capture_submit_stdin_invalid_json_exit_2_with_heredoc_hint(
+    wiki_root: Path, tmp_path: Path
+):
+    """Invalid JSON on stdin should exit 2 (schema-invalid) with a hint
+    pointing the caller at the file-path workaround.
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    runner = _runner()
+    # Corrupt the JSON exactly the way a broken heredoc would — extra
+    # trailing } after a well-formed object.
+    corrupt = '{"action":"noop","rationale":"nothing"}}'
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "capture",
+            "submit",
+            "--project",
+            "demo",
+            "--proposal",
+            "-",
+        ],
+        input=corrupt,
+    )
+    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert "proposal JSON invalid" in r.stderr
+    assert "heredoc" in r.stderr
+    assert "--proposal=<file-path>" in r.stderr
+
+
+def test_cli_capture_submit_file_invalid_json_exit_2_without_heredoc_hint(
+    wiki_root: Path, tmp_path: Path
+):
+    """File-path mode also wraps JSONDecodeError as exit 2, but without
+    the heredoc hint (the user already took the file-path path).
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    bad_proposal = tmp_path / "bad.json"
+    bad_proposal.write_text('{"action": not_a_thing')
+    runner = _runner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "capture",
+            "submit",
+            "--project",
+            "demo",
+            "--proposal",
+            str(bad_proposal),
+        ],
+    )
+    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert "proposal JSON invalid" in r.stderr
+    assert "heredoc" not in r.stderr
+
+
+def test_cli_capture_submit_missing_proposal_file_exit_1(
+    wiki_root: Path, tmp_path: Path
+):
+    """Pointing --proposal at a nonexistent file should exit 1 with a
+    clear 'proposal file not found' message, not a raw traceback.
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    runner = _runner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "capture",
+            "submit",
+            "--project",
+            "demo",
+            "--proposal",
+            str(tmp_path / "does-not-exist.json"),
+        ],
+    )
+    assert r.exit_code == 1, (r.stdout, r.stderr)
+    assert "proposal file not found" in r.stderr
+
+
+def test_cli_capture_submit_file_path_works_for_noop(
+    wiki_root: Path, tmp_path: Path
+):
+    """Sanity check: --proposal=<file> is a valid path for a noop proposal.
+
+    The primary motivation for documenting file-path mode is large
+    canonical_page bodies, but the flag works for any proposal shape.
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    proposal_file = tmp_path / "proposal.json"
+    proposal_file.write_text(
+        json.dumps({"action": "noop", "rationale": "nothing captured"})
+    )
+    runner = _runner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "capture",
+            "submit",
+            "--project",
+            "demo",
+            "--proposal",
+            str(proposal_file),
+        ],
+    )
+    assert r.exit_code == 3, (r.stdout, r.stderr)
+
+
 def test_cli_promote_raw_rejected_exit_2(wiki_root: Path, tmp_path: Path):
     cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
     raw = StagedFile(
