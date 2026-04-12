@@ -34,3 +34,28 @@ def test_round_trip_byte_identical_after_one_cycle():
     first = dumps(data)
     second = dumps(loads(first))
     assert first == second
+
+
+def test_body_with_yaml_document_separator_is_safe():
+    """Regression test for the core purpose of the block-scalar strategy.
+
+    A markdown body containing `---` (thematic break or HR) must not corrupt
+    the parent YAML document. It must serialize as a `|` block scalar and
+    round-trip byte-identically.
+    """
+    data = {
+        "state": "proposed",
+        "canonical_page": {
+            "frontmatter": {"id": "lv-story", "title": "Story"},
+            "body": "# Story\n\nOpening paragraph.\n\n---\n\nSection after a thematic break.\n",
+        },
+    }
+    first = dumps(data)
+    # Body must be emitted as a block scalar
+    assert "body: |" in first
+    # Round-trip must be byte-identical
+    second = dumps(loads(first))
+    assert first == second
+    # And the original body content (including the `---`) must be recoverable
+    parsed = loads(first)
+    assert "---" in parsed["canonical_page"]["body"]
