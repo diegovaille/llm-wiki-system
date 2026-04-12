@@ -46,15 +46,35 @@ repo_path = "<absolute path to the project repo>"
 source_globs = ["docs/**/*.md"]
 ```
 
-### 1c. Register the plugin with Claude Code
+### 1c. Register the skill and slash commands with Claude Code
 
-From inside any Claude Code session:
+Claude Code does not have a "register local plugin directory" slash command. Two supported paths:
 
+**Path A (recommended, persistent, zero ceremony) — symlink drop-in.**
+Claude Code auto-discovers skills under `~/.claude/skills/<name>/SKILL.md` and slash commands under `~/.claude/commands/<name>.md`. Symlinks are followed, so you can point them at this repo and keep the source of truth here:
+
+```bash
+ln -s /Users/diegovaille/Git/wiki-system/adapters/claude/skills/wiki ~/.claude/skills/wiki
+mkdir -p ~/.claude/commands
+ln -s /Users/diegovaille/Git/wiki-system/adapters/claude/commands/wiki-query.md ~/.claude/commands/wiki-query.md
+ln -s /Users/diegovaille/Git/wiki-system/adapters/claude/commands/wiki-capture.md ~/.claude/commands/wiki-capture.md
+ln -s /Users/diegovaille/Git/wiki-system/adapters/claude/commands/wiki-review.md ~/.claude/commands/wiki-review.md
+ln -s /Users/diegovaille/Git/wiki-system/adapters/claude/commands/wiki-promote.md ~/.claude/commands/wiki-promote.md
 ```
-/plugin add-dir /Users/diegovaille/Git/wiki-system/adapters/claude
+
+Start a new Claude Code session; `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote` will be available user-wide. Future edits to the source files are picked up automatically because the entries are symlinks.
+
+**Path B (session-scoped testing) — `--plugin-dir` flag.**
+Launch Claude Code with:
+
+```bash
+claude --plugin-dir /Users/diegovaille/Git/wiki-system/adapters/claude
 ```
 
-This loads the plugin manifest, the `wiki` skill, and the four slash commands (`/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`). The plugin is now user-wide.
+This loads the full plugin manifest (including `plugin.json`) but only for that process. Useful when iterating on plugin metadata; not the persistent install path.
+
+**Path C (advanced) — local marketplace + `claude plugin install`.**
+Create a marketplace descriptor pointing at `adapters/claude/`, register it in `~/.claude/settings.json` under `extraKnownMarketplaces`, then `claude plugin install wiki@<marketplace-name>`. Right way if you'll ever share this plugin with other users or want versioning. Overkill for a single-developer machine — prefer Path A.
 
 ### 1d. Grant global permissions
 
@@ -104,7 +124,7 @@ In all other cases, rely on the global grant.
 
 ## Uninstall
 
-- Run `/plugin remove /Users/diegovaille/Git/wiki-system/adapters/claude` (or whichever name Claude Code assigned)
+- Remove the symlinks: `rm ~/.claude/skills/wiki ~/.claude/commands/wiki-*.md`
 - Remove the `permissions.allow` entries from `~/.claude/settings.json`
 - Optionally, remove the `## Wiki` section from any project's `CLAUDE.md`
 
