@@ -1480,7 +1480,7 @@ def write_page(
     path = _pages_dir(wiki_root, project) / f"{fm.id}.md"
     yaml_text = dumps(fm.model_dump(mode="json"))
     text = _join_frontmatter(yaml_text, body)
-    _atomic_write(path, text)
+    atomic_write(path, text)
     return path
 
 
@@ -1514,7 +1514,7 @@ def write_staged(
     path = _staging_dir(wiki_root, project) / f"{ts}-{slug}.md"
     yaml_text = dumps(staged.model_dump(mode="json", exclude_none=True))
     text = _join_frontmatter(yaml_text, body)
-    _atomic_write(path, text)
+    atomic_write(path, text)
     return path
 
 
@@ -1557,7 +1557,7 @@ def append_manifest(wiki_root: Path, project: str, entry: dict[str, Any]) -> Non
 # ---------- Utilities ----------
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text)
@@ -1693,11 +1693,15 @@ def test_inferred_source_overlap_edges(wiki_root: Path):
 
 
 def test_save_and_load_index_round_trip(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha")
+    _write_page(wiki_root, "lv-alpha", related=["lv-beta"])
+    _write_page(wiki_root, "lv-beta")
     idx = build_index(wiki_root, "luminavine")
     save_index(wiki_root, "luminavine", idx)
     loaded = load_index(wiki_root, "luminavine")
-    assert loaded.pages[0].id == "lv-alpha"
+    assert [p.id for p in loaded.pages] == [p.id for p in idx.pages]
+    assert loaded.pages[0].body == idx.pages[0].body
+    assert loaded.built_at == idx.built_at
+    assert [(e.src, e.dst, e.kind) for e in loaded.edges] == [(e.src, e.dst, e.kind) for e in idx.edges]
 
 
 def test_render_views_creates_index_md(wiki_root: Path):
@@ -1727,6 +1731,23 @@ def test_heading_extraction(wiki_root: Path):
     idx = build_index(wiki_root, "luminavine")
     page_meta = next(p for p in idx.pages if p.id == "lv-alpha")
     assert "Heading one" in page_meta.headings
+
+
+def test_self_related_yields_no_curated_edge(wiki_root: Path):
+    _write_page(wiki_root, "lv-alpha", related=["lv-alpha"])
+    idx = build_index(wiki_root, "luminavine")
+    assert all(e.src != e.dst for e in idx.edges)
+
+
+def test_load_index_rejects_stale_schema(wiki_root: Path, tmp_path: Path):
+    import json
+    import pytest
+    project_dir = wiki_root / "luminavine"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    stale = {"schema_version": 0, "project": "luminavine", "built_at": "2026-04-12T00:00:00+00:00", "pages": [], "edges": []}
+    (project_dir / ".wiki-index.json").write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="stale wiki index"):
+        load_index(wiki_root, "luminavine")
 ```
 
 - [ ] **Step 3: Run tests, verify they fail**
@@ -1753,7 +1774,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from wiki_system.schema import PageFrontmatter
-from wiki_system.storage import list_pages, read_page
+from wiki_system.storage import atomic_write, list_pages, read_page
 
 
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
@@ -1805,12 +1826,12 @@ def _page_meta_from(fm: PageFrontmatter, body: str, path: Path) -> PageMeta:
         id=fm.id,
         title=fm.title,
         summary=fm.summary,
-        type=fm.type if isinstance(fm.type, str) else fm.type.value,
+        type=fm.type,
         domains=list(fm.domains),
         aliases=list(fm.aliases),
         sources=list(fm.sources),
         related=list(fm.related),
-        status=fm.status if isinstance(fm.status, str) else fm.status.value,
+        status=fm.status,
         updated_at=fm.updated_at,
         path=str(path),
         headings=HEADING_RE.findall(body),
@@ -1823,7 +1844,7 @@ def _compute_edges(idx: IndexData) -> None:
     # Curated: related: list
     for p in idx.pages:
         for target in p.related:
-            if target in ids:
+            if target != p.id and target in ids:
                 idx.edges.append(Edge(src=p.id, dst=target, kind="curated"))
     # Inferred backlinks: reverse of curated
     for e in list(idx.edges):
@@ -1842,6 +1863,7 @@ def _compute_edges(idx: IndexData) -> None:
 def save_index(wiki_root: Path, project: str, idx: IndexData) -> Path:
     path = wiki_root / project / ".wiki-index.json"
     payload = {
+        "schema_version": 1,
         "project": idx.project,
         "built_at": idx.built_at.isoformat(),
         "pages": [
@@ -1866,13 +1888,19 @@ def save_index(wiki_root: Path, project: str, idx: IndexData) -> Path:
             {"src": e.src, "dst": e.dst, "kind": e.kind} for e in idx.edges
         ],
     }
-    path.write_text(json.dumps(payload, indent=2))
+    atomic_write(path, json.dumps(payload, indent=2))
     return path
 
 
 def load_index(wiki_root: Path, project: str) -> IndexData:
     path = wiki_root / project / ".wiki-index.json"
     payload = json.loads(path.read_text())
+    version = payload.get("schema_version")
+    if version != 1:
+        raise ValueError(
+            f"stale wiki index at {path} (schema_version={version}); "
+            "run `wiki index` to rebuild"
+        )
     idx = IndexData(
         project=payload["project"],
         built_at=datetime.fromisoformat(payload["built_at"]),
@@ -1948,7 +1976,7 @@ def _render_index_view(path: Path, idx: IndexData, project: str, repo_path: str)
             "",
         ]
     )
-    path.write_text("\n".join(lines))
+    atomic_write(path, "\n".join(lines))
 
 
 def _render_by_type_view(path: Path, idx: IndexData, project: str) -> None:
@@ -1963,7 +1991,7 @@ def _render_by_type_view(path: Path, idx: IndexData, project: str) -> None:
             lines.append(f"- [{p.title}]({p.id}) — {p.summary}")
         lines.append("")
     lines.append("Do not edit by hand — regenerated by `wiki index`.")
-    path.write_text("\n".join(lines))
+    atomic_write(path, "\n".join(lines))
 
 
 def _render_by_domain_view(path: Path, idx: IndexData, project: str) -> None:
@@ -1979,7 +2007,7 @@ def _render_by_domain_view(path: Path, idx: IndexData, project: str) -> None:
             lines.append(f"- [{p.title}]({p.id}) — {p.summary}")
         lines.append("")
     lines.append("Do not edit by hand — regenerated by `wiki index`.")
-    path.write_text("\n".join(lines))
+    atomic_write(path, "\n".join(lines))
 
 
 def wiki_root_rel(view_path: Path, project: str) -> str:
@@ -1993,7 +2021,7 @@ Run:
 ```bash
 cd /Users/diegovaille/Git/wiki-system && .venv/bin/pytest tests/test_index.py -v
 ```
-Expected: `8 passed`
+Expected: `10 passed`
 
 - [ ] **Step 6: Commit**
 

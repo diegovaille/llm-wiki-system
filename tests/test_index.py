@@ -67,11 +67,15 @@ def test_inferred_source_overlap_edges(wiki_root: Path):
 
 
 def test_save_and_load_index_round_trip(wiki_root: Path):
-    _write_page(wiki_root, "lv-alpha")
+    _write_page(wiki_root, "lv-alpha", related=["lv-beta"])
+    _write_page(wiki_root, "lv-beta")
     idx = build_index(wiki_root, "luminavine")
     save_index(wiki_root, "luminavine", idx)
     loaded = load_index(wiki_root, "luminavine")
-    assert loaded.pages[0].id == "lv-alpha"
+    assert [p.id for p in loaded.pages] == [p.id for p in idx.pages]
+    assert loaded.pages[0].body == idx.pages[0].body
+    assert loaded.built_at == idx.built_at
+    assert [(e.src, e.dst, e.kind) for e in loaded.edges] == [(e.src, e.dst, e.kind) for e in idx.edges]
 
 
 def test_render_views_creates_index_md(wiki_root: Path):
@@ -101,3 +105,20 @@ def test_heading_extraction(wiki_root: Path):
     idx = build_index(wiki_root, "luminavine")
     page_meta = next(p for p in idx.pages if p.id == "lv-alpha")
     assert "Heading one" in page_meta.headings
+
+
+def test_self_related_yields_no_curated_edge(wiki_root: Path):
+    _write_page(wiki_root, "lv-alpha", related=["lv-alpha"])
+    idx = build_index(wiki_root, "luminavine")
+    assert all(e.src != e.dst for e in idx.edges)
+
+
+def test_load_index_rejects_stale_schema(wiki_root: Path, tmp_path: Path):
+    import json
+    import pytest
+    project_dir = wiki_root / "luminavine"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    stale = {"schema_version": 0, "project": "luminavine", "built_at": "2026-04-12T00:00:00+00:00", "pages": [], "edges": []}
+    (project_dir / ".wiki-index.json").write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="stale wiki index"):
+        load_index(wiki_root, "luminavine")

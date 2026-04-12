@@ -64,7 +64,7 @@ def write_page(
     path = _pages_dir(wiki_root, project) / f"{fm.id}.md"
     yaml_text = dumps(fm.model_dump(mode="json"))
     text = _join_frontmatter(yaml_text, body)
-    _atomic_write(path, text)
+    atomic_write(path, text)
     return path
 
 
@@ -98,7 +98,7 @@ def write_staged(
     path = _staging_dir(wiki_root, project) / f"{ts}-{slug}.md"
     yaml_text = dumps(staged.model_dump(mode="json", exclude_none=True))
     text = _join_frontmatter(yaml_text, body)
-    _atomic_write(path, text)
+    atomic_write(path, text)
     return path
 
 
@@ -141,7 +141,7 @@ def append_manifest(wiki_root: Path, project: str, entry: dict[str, Any]) -> Non
 # ---------- Utilities ----------
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text)
