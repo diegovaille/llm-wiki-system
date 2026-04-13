@@ -105,6 +105,32 @@ class UpgradedFrom(BaseModel):
     source_artifact: str | None = None
 
 
+class BootstrapFrom(BaseModel):
+    """Provenance for bootstrap-originated proposed staged files.
+
+    Records the seed question (or ad-hoc question) that drove the
+    bootstrap run. Lets `/wiki-review` display which question a page
+    answers, and lets bootstrap dedupe check whether a given question
+    already has a pending proposal.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_text: str
+    question_source: str  # "seed" | "ad-hoc"
+    question_key: str  # normalized slug used for dedupe
+    question_line: int | None = None  # 1-based line in queries/seed-questions.md
+
+    @field_validator("question_source")
+    @classmethod
+    def _validate_source(cls, v: str) -> str:
+        if v not in ("seed", "ad-hoc"):
+            raise ValueError(
+                f"question_source must be 'seed' or 'ad-hoc', got {v!r}"
+            )
+        return v
+
+
 class CanonicalPageEmbed(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -133,6 +159,7 @@ class StagedFile(BaseModel):
     proposed_action: ProposedAction | None = None
     target_page_id: str | None = None
     upgraded_from: UpgradedFrom | None = None
+    bootstrap_from: BootstrapFrom | None = None
     canonical_page: CanonicalPageEmbed | None = None
 
     @model_validator(mode="after")
@@ -154,6 +181,8 @@ class StagedFile(BaseModel):
                 raise ValueError("state: raw must not carry target_page_id")
             if self.upgraded_from is not None:
                 raise ValueError("state: raw must not carry upgraded_from")
+            if self.bootstrap_from is not None:
+                raise ValueError("state: raw must not carry bootstrap_from")
             return self
 
         # state == proposed
@@ -175,6 +204,15 @@ class StagedFile(BaseModel):
             raise ValueError("state: proposed must not carry trigger")
         if self.raw_body_bytes is not None:
             raise ValueError("state: proposed must not carry raw_body_bytes")
+
+        # bootstrap_from is bootstrap-exclusive
+        if (
+            self.bootstrap_from is not None
+            and self.origin != StagedFileOrigin.BOOTSTRAP.value
+        ):
+            raise ValueError(
+                "bootstrap_from is only valid with origin: bootstrap"
+            )
 
         # Page identity invariant
         emb_id = self.canonical_page.frontmatter.id

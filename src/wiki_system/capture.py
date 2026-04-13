@@ -8,16 +8,18 @@ from typing import Any
 
 from wiki_system.config import ProjectConfig
 from wiki_system.schema import (
-    CanonicalPageEmbed,
     PageFrontmatter,
-    ProposedAction,
     RawBodyMode,
     StagedFile,
     StagedFileOrigin,
     StagedState,
     UpgradedFrom,
 )
-from wiki_system.storage import list_pages, read_page, read_staged, utc_now, write_staged
+from wiki_system.staging_write import (
+    StagingWriteError,
+    write_proposed_staged_file,
+)
+from wiki_system.storage import list_pages, read_page, read_staged
 
 
 ALLOWED_ACTIONS = ["noop", "update", "create"]
@@ -160,10 +162,6 @@ class SubmitResult:
     proposed_page_id: str | None
 
 
-def _slug_for(fm: PageFrontmatter) -> str:
-    return fm.id
-
-
 def submit_capture(
     wiki_root: Path,
     *,
@@ -171,30 +169,31 @@ def submit_capture(
     proposal: dict[str, Any],
     from_staged: Path | None,
 ) -> SubmitResult:
+    """Validate a capture proposal and write a state: proposed staged file.
+
+    Noop short-circuits before the shared staging-write helper. For
+    create/update, we translate capture-specific rules (staged-upgrade
+    source_artifact requirement, session-origin session:* requirement)
+    into an `UpgradedFrom` if applicable, then delegate to
+    `write_proposed_staged_file`. Any `StagingWriteError` is re-raised
+    as `SubmitRejection` so the external `capture submit` contract is
+    unchanged.
+    """
     action = proposal.get("action")
     if action not in ALLOWED_ACTIONS:
         raise SubmitRejection(
             f"proposal.action must be one of {ALLOWED_ACTIONS}, got {action!r}"
         )
-
     if action == "noop":
         return SubmitResult(action="noop", staging_path="", proposed_page_id=None)
 
-    cp = proposal.get("canonical_page")
-    if not cp or "frontmatter" not in cp or "body" not in cp:
-        raise SubmitRejection(
-            "proposal must include canonical_page.frontmatter and canonical_page.body "
-            "for create/update actions"
-        )
-
-    try:
-        embed = CanonicalPageEmbed.model_validate(cp)
-    except Exception as e:
-        raise SubmitRejection(f"canonical_page schema invalid: {e}") from e
-
-    target_page_id = proposal.get("target_page_id")
+    # Capture-specific rules: if --from-staged, read the raw file and build
+    # an UpgradedFrom while enforcing the source_artifact-in-sources invariant.
+    # Otherwise enforce the session-origin "session:* in sources" rule.
     upgraded_from: UpgradedFrom | None = None
-    origin = StagedFileOrigin.CAPTURE
+    proposed_sources = (
+        proposal.get("canonical_page", {}).get("frontmatter", {}).get("sources", [])
+    )
 
     if from_staged is not None:
         raw_sf, _ = read_staged(from_staged)
@@ -202,7 +201,7 @@ def submit_capture(
             raise SubmitRejection(
                 f"--from-staged requires state: raw, got state: {raw_sf.state}"
             )
-        if raw_sf.source_artifact not in embed.frontmatter.sources:
+        if raw_sf.source_artifact not in proposed_sources:
             raise SubmitRejection(
                 f"proposed page sources must include the original source_artifact "
                 f"({raw_sf.source_artifact})"
@@ -214,34 +213,31 @@ def submit_capture(
             source_artifact=raw_sf.source_artifact,
         )
     else:
-        # session-origin: require a session:<date>-<slug> source entry
-        if not any(s.startswith("session:") for s in embed.frontmatter.sources):
+        if not any(
+            isinstance(s, str) and s.startswith("session:") for s in proposed_sources
+        ):
             raise SubmitRejection(
                 "session-origin capture requires a source of the form "
                 "'session:<YYYY-MM-DD>-<slug>' in canonical_page.frontmatter.sources"
             )
 
     try:
-        staged = StagedFile(
-            state=StagedState.PROPOSED,
-            origin=origin,
-            created_at=utc_now(),
+        result = write_proposed_staged_file(
+            wiki_root=wiki_root,
+            project=project,
+            proposal=proposal,
+            origin=StagedFileOrigin.CAPTURE,
             created_by="capture",
-            proposed_action=ProposedAction(action),
-            target_page_id=target_page_id,
             upgraded_from=upgraded_from,
-            canonical_page=embed,
         )
-    except Exception as e:
-        raise SubmitRejection(f"staged envelope invalid: {e}") from e
+    except StagingWriteError as e:
+        raise SubmitRejection(str(e)) from e
 
-    path = write_staged(
-        wiki_root, project, staged, "", slug=_slug_for(embed.frontmatter)
-    )
     if from_staged is not None:
         from_staged.unlink()
+
     return SubmitResult(
-        action=action,
-        staging_path=str(path),
-        proposed_page_id=embed.frontmatter.id,
+        action=result.action,
+        staging_path=str(result.path),
+        proposed_page_id=result.proposed_page_id,
     )

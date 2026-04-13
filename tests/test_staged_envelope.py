@@ -209,3 +209,114 @@ def test_proposed_with_sync_origin_rejected():
     }
     with pytest.raises(ValidationError, match="origin in \\(capture, bootstrap\\)"):
         StagedFile.model_validate(data)
+
+
+def _valid_bootstrap_from(**overrides):
+    base = {
+        "question_text": "How does the story pipeline work?",
+        "question_source": "seed",
+        "question_key": "how-does-the-story-pipeline-work",
+        "question_line": 1,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_proposed_bootstrap_with_bootstrap_from_accepted():
+    data = {
+        "state": "proposed",
+        "origin": "bootstrap",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "wiki bootstrap",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "bootstrap_from": _valid_bootstrap_from(),
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+    f = StagedFile.model_validate(data)
+    assert f.origin == "bootstrap"
+    assert f.bootstrap_from is not None
+    assert f.bootstrap_from.question_source == "seed"
+    assert f.bootstrap_from.question_key == "how-does-the-story-pipeline-work"
+
+
+def test_proposed_bootstrap_without_bootstrap_from_accepted():
+    """bootstrap_from is soft-required (by writer convention, not schema),
+    so an origin: bootstrap file without it still parses — back-compat with
+    any hand-written bootstrap files that predate the provenance field.
+    """
+    data = {
+        "state": "proposed",
+        "origin": "bootstrap",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "operator",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+    f = StagedFile.model_validate(data)
+    assert f.bootstrap_from is None
+
+
+def test_proposed_capture_with_bootstrap_from_rejected():
+    """bootstrap_from is bootstrap-exclusive — capture-origin proposed
+    files must not carry it.
+    """
+    data = {
+        "state": "proposed",
+        "origin": "capture",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "capture",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "bootstrap_from": _valid_bootstrap_from(),
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+    with pytest.raises(
+        ValidationError, match="bootstrap_from is only valid with origin: bootstrap"
+    ):
+        StagedFile.model_validate(data)
+
+
+def test_raw_with_bootstrap_from_rejected():
+    """raw files never carry bootstrap_from."""
+    data = {
+        "state": "raw",
+        "origin": "sync",
+        "created_at": "2026-04-12T14:30:00Z",
+        "created_by": "wiki sync",
+        "source_artifact": "docs/foo.md",
+        "trigger": "manual",
+        "raw_body_mode": "inline",
+        "bootstrap_from": _valid_bootstrap_from(),
+    }
+    with pytest.raises(ValidationError, match="state: raw must not carry bootstrap_from"):
+        StagedFile.model_validate(data)
+
+
+def test_bootstrap_from_question_source_validated():
+    """question_source must be 'seed' or 'ad-hoc' — anything else is rejected."""
+    data = {
+        "state": "proposed",
+        "origin": "bootstrap",
+        "created_at": "2026-04-12T14:35:00Z",
+        "created_by": "wiki bootstrap",
+        "proposed_action": "create",
+        "target_page_id": None,
+        "bootstrap_from": _valid_bootstrap_from(question_source="hallucinated"),
+        "canonical_page": {
+            "frontmatter": _valid_page_fm(),
+            "body": "# Title\n\nBody.\n",
+        },
+    }
+    with pytest.raises(ValidationError, match="question_source"):
+        StagedFile.model_validate(data)
