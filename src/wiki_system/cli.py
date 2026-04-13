@@ -97,20 +97,24 @@ def query(ctx: click.Context, project: str, question: str, limit: int) -> None:
     try:
         results = run_query(wiki_root, project, question, cfg.retrieval, limit=limit)
     except FileNotFoundError:
+        # Exit 4: index unavailable. Distinct from exit 2 (no results) so
+        # machine callers can tell "wiki has nothing on this topic" apart
+        # from "wiki isn't in a queryable state."
         click.echo(
             f"wiki index not found for project '{project}'. "
             f"Run `wiki index {project}` first, then retry.",
             err=True,
         )
-        ctx.exit(2)
+        ctx.exit(4)
     except ValueError as e:
-        # Raised by load_index on a stale schema_version
+        # Raised by load_index on a stale schema_version — same class
+        # as missing index: infrastructure unavailable, not a query failure.
         click.echo(
             f"wiki index unreadable for project '{project}': {e}. "
             f"Run `wiki index {project}` to rebuild.",
             err=True,
         )
-        ctx.exit(2)
+        ctx.exit(4)
     payload = [
         {
             "id": r.id,

@@ -42,7 +42,7 @@ Two repos, three layers:
 ```
 
 - **wiki-system** is the tooling repo. Clone it, `uv sync`, run `wiki init` — it's standalone.
-- **~/Git/wiki/** is your data repo. A separate git repo that holds pages, staging, and views for every project you wiki-enable. `wiki init` seeds it from `wiki.config.example.toml` on first run.
+- **~/Git/wiki/** is your data repo. A separate git repo that holds pages, staging, and views for every project you wiki-enable. `wiki init` is what creates it on first run: it makes the directory if missing, runs `git init` to turn it into a repo, and seeds `wiki.config.toml` from `wiki.config.example.toml`. **Heads up:** this means `wiki init` mutates `~/Git/wiki/` (or whatever `--wiki-data-root` points at) into a git repo. If that directory already exists and is already a git repo, `wiki init` leaves it alone; it only initializes when there's no `.git` yet. Subsequent `wiki init` runs are idempotent and never re-initialize the repo or overwrite an existing `wiki.config.toml`.
 - **Canonical pages** never get edited directly. Every change goes through staging and `wiki promote` — which gives you a diff, a dry-run, an audit trail in `sources/manifest.jsonl`, and a single-writer invariant that prevents hand-edits from silently corrupting the index.
 
 ## Quickstart

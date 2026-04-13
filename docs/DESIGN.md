@@ -751,20 +751,26 @@ Every core command honors this contract. Adapters can rely on it.
 
 | Command | stdout | stderr | exit codes |
 |---|---|---|---|
-| `wiki query` | JSON array of results | diagnostics | 0 ok, 2 no results, 1 error |
+| `wiki query` | JSON array of results | diagnostics | 0 ok, 2 no results, 4 index unavailable (missing/stale), 1 error |
 | `wiki capture prepare` | JSON prompt package | diagnostics | 0 ok, 1 error |
 | `wiki capture submit` | JSON `{action, staging_path, proposed_page_id}` | diagnostics | 0 staged, 3 noop (nothing staged), 2 schema-invalid proposal, 1 error |
-| `wiki bootstrap prepare` | JSON prompt package (per question) | diagnostics | 0 ok, 1 error |
+| `wiki bootstrap prepare` | JSON prompt package (per question) | diagnostics | 0 ok, 2 invalid question / pending duplicate, 3 --all queue empty, 1 error |
 | `wiki bootstrap submit` | JSON `{action, staging_path, proposed_page_id}` or `{action: noop}` | diagnostics | 0 staged, 3 noop, 2 invalid, 1 error |
-| `wiki sync` | JSON `{staging_path, state: "raw", trigger}` | diagnostics | 0 ok, 1 error |
+| `wiki sync` | JSON `{created, removed, skipped, warnings}` | diagnostics | 0 ok, 1 error |
 | `wiki promote` | JSON `{action, page_id, path}` | diff (human-readable) | 0 applied, 3 dry-run, 2 staged file is not `state: proposed`, 1 error |
 | `wiki index` | JSON `{pages_indexed, warnings_count}` | warnings list | 0 ok, 2 schema warnings (strict), 1 error |
+| `wiki review` | JSON list of `ReviewItem` | diagnostics | 0 non-empty queue, 3 empty queue, 1 error |
+| `wiki init` | JSON `{rendered, symlinks, seeded_config, permissions_snippet}` | diagnostics + instructions | 0 ok, 1 error |
 
 **Invariants:**
 - All commands accept `--json` (default for machine callers)
 - Human-readable output goes to stderr for commands that also emit JSON on stdout
 - Commands are pipeable: `wiki capture prepare | <agent-produces-proposal> | wiki capture submit`
-- **Exit code `3`** means either explicit dry-run or a generative op decided nothing should be written (`noop`). Exit code `0` always means "state changed on disk as expected."
+- **Exit code `0`** always means "state changed on disk as expected" or "query succeeded."
+- **Exit code `1`** is reserved for generic/config errors (missing config, project not found, I/O failure not captured by a more specific code).
+- **Exit code `2`** is for domain-level rejection: the input was malformed or the state machine refused the operation (e.g. `promote` on a `state: raw` file, `capture submit` on a schema-invalid proposal, `query` returned zero results for a legitimate question).
+- **Exit code `3`** means either explicit dry-run or a generative op decided nothing should be written (`noop`, empty review queue, bootstrap `--all` queue drained).
+- **Exit code `4`** means infrastructure unavailable for a read-side op — specifically `wiki query` when the index is missing or at a stale schema version. This is distinct from exit `2` so machine callers can distinguish "wiki has nothing on this topic" (exit 2, user should fall back to docs) from "wiki isn't in a queryable state" (exit 4, user should run `wiki index`).
 
 ## 11. Scope phasing
 

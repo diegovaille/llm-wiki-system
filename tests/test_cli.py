@@ -148,12 +148,13 @@ def test_cli_query_no_results_exit_2(wiki_root: Path, tmp_path: Path):
     assert r.exit_code == 2
 
 
-def test_cli_query_missing_index_exits_with_actionable_error(
+def test_cli_query_missing_index_exits_4_with_actionable_error(
     wiki_root: Path, tmp_path: Path
 ):
     """On a fresh project with no .wiki-index.json, `wiki query` must NOT
-    produce a Python traceback. It must print a clean stderr message
-    telling the user to run `wiki index <project>` first, and exit 2.
+    produce a Python traceback. Exit code 4 (index unavailable) —
+    distinct from exit 2 (no results) so machine callers can tell
+    'wiki has nothing on this topic' apart from 'wiki isn't queryable'.
     """
     cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
     _seed(wiki_root)
@@ -162,7 +163,7 @@ def test_cli_query_missing_index_exits_with_actionable_error(
     r = runner.invoke(
         main, ["--config", str(cfg_path), "query", "demo", "story pipeline"]
     )
-    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert r.exit_code == 4, (r.stdout, r.stderr)
     assert "wiki index" in r.stderr
     assert "not found" in r.stderr
     # Traceback must not leak to stderr
@@ -170,11 +171,12 @@ def test_cli_query_missing_index_exits_with_actionable_error(
     assert "FileNotFoundError" not in r.stderr
 
 
-def test_cli_query_stale_schema_version_exits_with_actionable_error(
+def test_cli_query_stale_schema_version_exits_4_with_actionable_error(
     wiki_root: Path, tmp_path: Path
 ):
     """If .wiki-index.json exists but has a stale schema_version, query
-    must exit 2 with a clean rebuild instruction, not raise ValueError.
+    must exit 4 (index unavailable) with a clean rebuild instruction,
+    not raise ValueError.
     """
     cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
     _seed(wiki_root)
@@ -188,9 +190,28 @@ def test_cli_query_stale_schema_version_exits_with_actionable_error(
     r = runner.invoke(
         main, ["--config", str(cfg_path), "query", "demo", "story pipeline"]
     )
-    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert r.exit_code == 4, (r.stdout, r.stderr)
     assert "wiki index" in r.stderr
     assert "Traceback" not in r.stderr
+
+
+def test_cli_query_no_results_stays_exit_2(wiki_root: Path, tmp_path: Path):
+    """Regression guard: 'no results' remains exit 2. The exit-4 addition
+    for index-unavailable must NOT disturb the no-results exit code that
+    downstream callers may already rely on. Exit 2 and exit 4 are now
+    semantically distinct for wiki query:
+      - 2: query ran successfully, wiki returned zero hits
+      - 4: wiki could not be queried (index missing/stale)
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    _seed(wiki_root)
+    runner = _runner()
+    runner.invoke(main, ["--config", str(cfg_path), "index", "demo"])
+    r = runner.invoke(
+        main,
+        ["--config", str(cfg_path), "query", "demo", "unrelatedxyzqqq"],
+    )
+    assert r.exit_code == 2, (r.stdout, r.stderr)
 
 
 def test_cli_capture_prepare_emits_json(wiki_root: Path, tmp_path: Path):
