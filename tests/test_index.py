@@ -107,6 +107,24 @@ def test_heading_extraction(wiki_root: Path):
     assert "Heading one" in page_meta.headings
 
 
+def test_views_emit_relative_markdown_links_to_pages(wiki_root: Path):
+    """Views must use `../pages/<id>.md` for links so standard markdown
+    renderers (Obsidian, VS Code preview, GitHub, mkdocs) can resolve
+    them. Bare-id links like `[Title](demo-alpha)` only happen to work
+    in Obsidian's fuzzy resolver and break everywhere else.
+    """
+    _write_page(wiki_root, "demo-alpha", type_=PageType.SYSTEM, domains=["pipeline"])
+    _write_page(wiki_root, "demo-beta", type_=PageType.WORKFLOW, domains=["workflow"])
+    idx = build_index(wiki_root, "demo")
+    render_views(wiki_root, "demo", idx, repo_path="/tmp/x")
+
+    for view_name in ("index.md", "by-type.md", "by-domain.md"):
+        content = (wiki_root / "demo" / "views" / view_name).read_text()
+        # Every page must appear as a relative link to ../pages/<id>.md
+        assert "../pages/demo-alpha.md" in content, f"{view_name} missing demo-alpha link"
+        assert "../pages/demo-beta.md" in content, f"{view_name} missing demo-beta link"
+
+
 def test_self_related_yields_no_curated_edge(wiki_root: Path):
     _write_page(wiki_root, "demo-alpha", related=["demo-alpha"])
     idx = build_index(wiki_root, "demo")
