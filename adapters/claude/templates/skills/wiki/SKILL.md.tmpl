@@ -44,7 +44,20 @@ Do NOT capture routine implementation, obvious bug fixes, small refactors, or tr
 3. `WIKI capture prepare` / `WIKI capture submit` — session/tacit learning → staged proposal
 4. `WIKI promote` — the only path from staging to pages
 5. `WIKI review` (via `/wiki-review`) — list pending staged items
-6. `WIKI sync` — (v0.2) artifact registration
+6. `WIKI sync` (via `/wiki-sync`) — register project docs as `state: raw` staged files for later distillation via `/wiki-capture --from-staged=<path>`
+
+## Two ways content enters the wiki
+
+**Session-origin capture.** A decision, pattern, or lesson just happened in the current session and is worth keeping. Use `/wiki-capture` with free-text notes. The page sources record a `session:<date>-<slug>` id. Use sparingly — the under-capture bias above is the point.
+
+**Staged-upgrade capture from existing repo docs.** The user wants to distill documentation that already exists in the project repo into wiki pages. The flow is:
+
+1. `/wiki-sync <project> [--path <subtree>]` — registers each matching doc under `source_globs` as a `state: raw` staged file
+2. `/wiki-review` — lists the raw queue
+3. `/wiki-capture <staging-path>` — upgrades one raw file to a proposed canonical page (the slash command auto-detects the staged-upgrade branch when `$ARGUMENTS` is a staging path)
+4. `/wiki-promote <staging-path>` — canonicalizes it
+
+Staged-upgrade pages record the original `source_artifact` in sources, so the audit trail from repo doc to wiki page is exact. Prefer scoped sync (`--path docs/technical/`) over whole-repo sync to avoid overwhelming the review queue.
 
 ## Prepare/submit protocol
 

@@ -115,7 +115,7 @@ def test_render_adapter_routes_commands_under_agents_dir(tmp_path: Path):
     cfg = resolve_config(fake_ws, wiki_data, agents_dir, claude_dir)
     rendered = render_adapter(cfg)
     commands = [p for p in rendered if p.name.startswith("wiki-") and p.suffix == ".md"]
-    assert len(commands) == 4
+    assert len(commands) == 5
     for c in commands:
         assert agents_dir in c.parents
         assert c.parent.name == "commands"
@@ -172,7 +172,7 @@ def test_install_claude_symlinks_creates_per_command_symlinks(tmp_path: Path):
     install_claude_symlinks(cfg)
     commands_link = claude_dir / "commands"
     wiki_links = sorted(commands_link.glob("wiki-*.md"))
-    assert len(wiki_links) == 4
+    assert len(wiki_links) == 5
     for link in wiki_links:
         assert link.is_symlink()
         assert link.resolve().parent == (agents_dir / "commands").resolve()
@@ -224,10 +224,10 @@ def test_run_init_end_to_end(tmp_path: Path):
         claude_dir=claude_dir,
     )
     assert result.seeded_config is not None
-    # SKILL + 4 commands + snippet = 6 canonical files
-    assert len(result.rendered) == 6
-    # 1 skill dir symlink + 4 command symlinks = 5
-    assert len(result.symlinks) == 5
+    # SKILL + 5 commands + snippet = 7 canonical files
+    assert len(result.rendered) == 7
+    # 1 skill dir symlink + 5 command symlinks = 6
+    assert len(result.symlinks) == 6
     # Skill in agents canonical, symlinked under claude
     canonical_skill = agents_dir.resolve() / "skills" / "wiki" / "SKILL.md"
     claude_skill = claude_dir.resolve() / "skills" / "wiki" / "SKILL.md"
@@ -281,8 +281,8 @@ def test_cli_init_json_output_shape(tmp_path: Path):
     assert "rendered" in payload
     assert "symlinks" in payload
     assert "permissions_snippet" in payload
-    assert len(payload["rendered"]) == 6
-    assert len(payload["symlinks"]) == 5
+    assert len(payload["rendered"]) == 7
+    assert len(payload["symlinks"]) == 6
 
 
 def test_cli_init_text_mode_shows_both_tiers(tmp_path: Path):
