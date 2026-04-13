@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -102,11 +103,22 @@ def resolve_config(
 
 
 def seed_wiki_config_if_missing(cfg: InitConfig) -> Path | None:
-    """Copy wiki.config.example.toml into the wiki data repo if no config exists.
+    """Initialize the wiki data repo and seed wiki.config.toml if missing.
+
+    On a fresh run:
+    1. Create `wiki_data_root` if it doesn't exist
+    2. Run `git init --quiet` in it if it's not already a git repo — the
+       spec treats `~/Git/wiki/` as a versioned store of canonical pages
+       and manifests, so it must be a git repo from the start
+    3. Copy `wiki.config.example.toml` into place as `wiki.config.toml`
 
     Returns the path that was written, or None if a config already existed.
-    Does NOT create the wiki data repo itself or run `git init` — that's the
-    caller's responsibility (the CLI does it; tests pass an existing dir).
+    When a config already exists, git-init is skipped too (the repo is
+    assumed-initialized by whoever created the config).
+
+    Git is required. If `git init` fails (git not installed, permission
+    denied, etc.) the exception propagates — callers treat it as an
+    init failure.
     """
     if cfg.wiki_config_path.exists():
         return None
@@ -117,6 +129,12 @@ def seed_wiki_config_if_missing(cfg: InitConfig) -> Path | None:
             f"cannot seed a config for a fresh wiki data repo"
         )
     cfg.wiki_data_root.mkdir(parents=True, exist_ok=True)
+    if not (cfg.wiki_data_root / ".git").exists():
+        subprocess.run(
+            ["git", "init", "--quiet"],
+            cwd=cfg.wiki_data_root,
+            check=True,
+        )
     shutil.copyfile(example, cfg.wiki_config_path)
     return cfg.wiki_config_path
 

@@ -30,7 +30,7 @@ Steps:
    ```
 5. If an item has `parse_error`, surface it clearly and recommend manual inspection.
 6. Ask the user which item to act on. Based on state:
-   - `state: raw` → offer `/wiki-capture --from-staged=<staging_path>` (v0.2 feature; in v0.1 this is purely informational)
+   - `state: raw` → offer `/wiki-capture <staging_path>` — the `/wiki-capture` slash command auto-detects staged-upgrade mode when `$ARGUMENTS` is a path under `staging/`. Upgrades the raw file into a proposed page with the original `source_artifact` preserved in the audit trail.
    - `state: proposed` → offer `/wiki-promote <staging_path>`
 
 Hard rules:

@@ -53,7 +53,11 @@ git clone <this repo> ~/Git/wiki-system
 cd ~/Git/wiki-system
 uv venv && uv sync
 
-# 2. Initialize (creates wiki data repo, installs adapter, prints permissions snippet)
+# 2. Initialize:
+#    - creates ~/Git/wiki/ (your wiki data repo) and runs `git init` in it
+#    - seeds wiki.config.toml from wiki.config.example.toml
+#    - renders adapter templates into ~/.agents/ and symlinks them from ~/.claude/
+#    - prints a permissions JSON snippet for ~/.claude/settings.json
 .venv/bin/wiki --no-json init
 
 # 3. Edit the seeded config to register your projects
@@ -142,23 +146,37 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 `.claude/settings.local.json` is gitignored.
 
-## Scope (v0.1)
+## Current surface (v0.2.0)
 
-**In scope for v0.1:**
+**CLI commands shipped and tested:**
 
-- Core CLI (`query`, `index`, `capture prepare/submit`, `promote`, `review`, `init`)
-- Agent execution mode via prepare/submit (Claude Code tested; other agents untested but designed-for)
-- Single-developer, local filesystem, manual commits to `~/Git/wiki/`
-- Claude adapter with one skill and four slash commands
+- `wiki init` — seed `wiki.config.toml` and `git init` the data repo; render the Claude adapter templates with your machine-specific paths and symlink them into `~/.agents/` (canonical) + `~/.claude/` (symlinks). Idempotent.
+- `wiki query <project> "<q>"` — lexical + link-graph retrieval
+- `wiki index <project>` — rebuild the retrieval index + regenerate views
+- `wiki capture prepare|submit` — session-origin and staged-upgrade capture
+- `wiki promote <project> <staging-path>` — dry-run or `--apply` a proposed staged file
+- `wiki review <project>` — deterministic listing of the staging queue
+- `wiki sync <project> [--path <subtree>] [--force]` — register project docs matching `source_globs` as `state: raw` staged files. Manual / operator-driven in v0.1.1; hook-driven triggers remain deferred.
+- `wiki bootstrap prepare|submit <project> --question "..." [--ad-hoc]` — single-question mode for seed-question-driven page synthesis. v0.2.0 slice; `--all` loop mode and `--max-proposals` deferred.
 
-**Out of scope for v0.1, deliberate:**
+**Claude adapter surface:**
 
-- `wiki sync` — hook-driven artifact registration from live project repos (v0.2)
-- `wiki bootstrap` — question-led scaffolding of initial pages (v0.2)
-- Direct-API execution mode (calls Claude without a Claude Code session) (v0.2)
+- One main `wiki` skill + one pluggable `wiki-bootstrap` sub-skill (installed as separate files under `~/.agents/skills/`, symlinked into `~/.claude/skills/`)
+- Six slash commands: `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`, `/wiki-sync`, `/wiki-bootstrap`
+- All templates render the binary as an absolute path — no PATH inheritance required
+- Execution is agent-mode only (prepare/submit protocol drives Claude Code; direct-API mode is v0.2+)
+
+**Still deferred:**
+
+- `wiki bootstrap --all` loop mode with `--max-proposals` (v0.2.1)
+- Hook-driven `wiki sync` (post-spec, post-commit triggers) (v0.2)
+- `wiki blame`, `wiki export-site` (v0.2.x)
+- `wiki doctor` / `wiki status` health check command (v0.2.x)
+- Direct-API execution mode (no Claude Code session required) (v0.2)
+- Codex adapter (v0.3, architecture already set up for it)
 - Embeddings / vector retrieval (explicitly rejected — inspectability wins)
 - Multi-user or shared-wiki workflows (v0.3)
-- A browser UI (markdown views are the UI for now; `mkdocs` or Obsidian will work if you want prettier rendering)
+- A browser UI (markdown views are the UI for now; Obsidian is the recommended reader)
 
 ## License
 

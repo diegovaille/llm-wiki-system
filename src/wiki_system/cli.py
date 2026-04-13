@@ -94,7 +94,23 @@ def query(ctx: click.Context, project: str, question: str, limit: int) -> None:
     cfg = _load_config_or_die(ctx)
     _get_project_or_die(ctx, cfg, project)
     wiki_root = cfg.wiki_root_path()
-    results = run_query(wiki_root, project, question, cfg.retrieval, limit=limit)
+    try:
+        results = run_query(wiki_root, project, question, cfg.retrieval, limit=limit)
+    except FileNotFoundError:
+        click.echo(
+            f"wiki index not found for project '{project}'. "
+            f"Run `wiki index {project}` first, then retry.",
+            err=True,
+        )
+        ctx.exit(2)
+    except ValueError as e:
+        # Raised by load_index on a stale schema_version
+        click.echo(
+            f"wiki index unreadable for project '{project}': {e}. "
+            f"Run `wiki index {project}` to rebuild.",
+            err=True,
+        )
+        ctx.exit(2)
     payload = [
         {
             "id": r.id,

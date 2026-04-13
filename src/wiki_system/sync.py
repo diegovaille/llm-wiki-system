@@ -124,12 +124,14 @@ def _collect_candidates(
 def _existing_raw_by_source(
     wiki_root: Path, project: str, path_filter: str | None
 ) -> dict[str, Path]:
-    """Map source_artifact → staging-file Path for every raw staged file.
+    """Map source_artifact → staging-file Path for every **raw** staged file.
+
+    Used for `--force`-mode deletion: raw files are disposable and the
+    force path re-creates them. Proposed files are NOT considered here
+    — they carry real work and must never be deleted by sync.
 
     Scoped to the path filter so `--force docs/technical/` does not list
-    unrelated raw files. Non-raw staged files are ignored. Files that
-    fail to parse are silently skipped (they show up in `wiki review`
-    with a parse_error already).
+    unrelated raw files.
     """
     by_source: dict[str, Path] = {}
     for staged_path in list_staged(wiki_root, project):
@@ -148,6 +150,60 @@ def _existing_raw_by_source(
     return by_source
 
 
+def _occupied_source_artifacts(
+    wiki_root: Path, project: str, path_filter: str | None
+) -> dict[str, str]:
+    """Map source_artifact → skip-reason for every staged file that
+    'occupies' a source_artifact slot.
+
+    A source artifact is occupied if:
+    - A `state: raw` staged file exists with that `source_artifact`
+      ('already staged as raw'), OR
+    - A `state: proposed` staged file exists with `upgraded_from.source_artifact`
+      matching that path ('already upgraded to proposed')
+
+    The second case is the bug fix: without it, a sync → capture
+    (raw→proposed) → sync cycle would recreate a raw file for a
+    source doc that already has a live proposed file in the queue,
+    producing competing items. By treating the source artifact as
+    occupied when a proposed file has upgraded from it, sync skips
+    it silently and the user sees it only as 'skipped: already
+    upgraded to proposed' in the output.
+
+    Scoped to `path_filter` so callers can run `--force docs/technical/`
+    without touching unrelated proposed items.
+    """
+    occupied: dict[str, str] = {}
+    for staged_path in list_staged(wiki_root, project):
+        try:
+            staged, _body = read_staged(staged_path)
+        except Exception:
+            continue
+        src: str | None = None
+        reason = ""
+        if staged.state == StagedState.RAW.value:
+            src = staged.source_artifact
+            reason = "already staged as raw"
+        elif (
+            staged.state == StagedState.PROPOSED.value
+            and staged.upgraded_from is not None
+            and staged.upgraded_from.source_artifact
+        ):
+            src = staged.upgraded_from.source_artifact
+            reason = "already upgraded to proposed"
+        if src is None:
+            continue
+        if not _matches_path_filter(src, path_filter):
+            continue
+        # If both a raw and a proposed exist for the same source, the
+        # raw record wins in this map (it's the deletable one), but
+        # --force deletion is bounded by _existing_raw_by_source
+        # anyway so there's no risk of nuking the proposed.
+        if src not in occupied:
+            occupied[src] = reason
+    return occupied
+
+
 def run_sync(
     *,
     wiki_root: Path,
@@ -163,14 +219,21 @@ def run_sync(
 
     1. Collect candidate artifacts from `project_cfg.source_globs`, filtered
        to `path_filter` if given.
-    2. Build a map of existing raw staged files in scope (same path
-       filter applied), keyed by source_artifact.
-    3. If `force`, delete the existing raw files in scope — those slots
-       are about to be re-filled.
-    4. For each candidate not already staged, write a new raw staged
-       file. Inline body if under `sync_cfg.inline_threshold_bytes`,
+    2. Build the occupancy map: `source_artifact → skip-reason` for every
+       staged file in scope that already "covers" a source artifact —
+       either a raw file or a proposed file with `upgraded_from.source_artifact`
+       pointing at it. This dedupe is tighter than raw-only dedupe because
+       it prevents the sync → capture → sync cycle from producing
+       competing raw/proposed pairs for the same source doc.
+    3. If `force`, delete any raw staged files in scope and drop their
+       entries from the occupancy map. Proposed files are NEVER deleted
+       by sync; --force only affects disposable raw items.
+    4. For each candidate not in the occupancy map, write a new raw
+       staged file. Inline body if under `sync_cfg.inline_threshold_bytes`,
        pointer otherwise.
     5. Return a `SyncResult` with created / removed / skipped / warnings.
+       Skipped entries record both the source path and the reason
+       ('already staged as raw' vs 'already upgraded to proposed').
 
     Errors during UTF-8 decoding of a candidate file add a warning and
     skip that file; they do not abort the run.
@@ -179,22 +242,26 @@ def run_sync(
     result = SyncResult()
 
     candidates = _collect_candidates(project_cfg, normalized_filter)
-    existing = _existing_raw_by_source(
+    occupied = _occupied_source_artifacts(
         wiki_root, project_cfg.name, normalized_filter
     )
 
     if force:
-        for src, staged_path in existing.items():
+        # Force only deletes raw files; proposed files stay.
+        raw_existing = _existing_raw_by_source(
+            wiki_root, project_cfg.name, normalized_filter
+        )
+        for src, staged_path in raw_existing.items():
             staged_path.unlink()
             result.removed.append(staged_path)
-        existing = {}
+            occupied.pop(src, None)
 
     repo_path = Path(project_cfg.repo_path).expanduser().resolve()
 
     for rel in candidates:
         src = str(rel)
-        if src in existing:
-            result.skipped.append(src)
+        if src in occupied:
+            result.skipped.append(f"{src} ({occupied[src]})")
             continue
         artifact_abs = repo_path / rel
         try:

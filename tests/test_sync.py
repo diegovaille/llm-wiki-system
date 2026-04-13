@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -193,12 +194,14 @@ def test_sync_skips_existing_raw_files_by_default(
         wiki_root=wiki_root, project_cfg=project_cfg, sync_cfg=_sync_cfg()
     )
     assert len(first.created) == 2
-    # Second run: no new files, both skipped
+    # Second run: no new files, both skipped with reason
     second = run_sync(
         wiki_root=wiki_root, project_cfg=project_cfg, sync_cfg=_sync_cfg()
     )
     assert second.created == []
-    assert set(second.skipped) == {"docs/a.md", "docs/b.md"}
+    skipped_paths = {line.split(" ", 1)[0] for line in second.skipped}
+    assert skipped_paths == {"docs/a.md", "docs/b.md"}
+    assert all("already staged as raw" in line for line in second.skipped)
     assert second.removed == []
 
 
@@ -320,6 +323,197 @@ def test_sync_trigger_is_recorded_on_raw_files(
     )
     staged, _ = read_staged(result.created[0])
     assert staged.trigger == "post-spec"
+
+
+def test_sync_dedupes_against_already_upgraded_proposed(
+    wiki_root: Path, tmp_path: Path
+):
+    """Regression test for the reviewer-caught bug: after sync → capture
+    upgrades a raw file to proposed, a second sync MUST NOT create a
+    duplicate raw file for the same source_artifact. The second sync
+    should see the proposed file (via its upgraded_from.source_artifact)
+    and skip with reason 'already upgraded to proposed'.
+    """
+    from datetime import datetime, timezone
+
+    from wiki_system.schema import (
+        CanonicalPageEmbed,
+        Confidence,
+        PageFrontmatter,
+        PageStatus,
+        PageType,
+        ProposedAction,
+        StagedFile,
+        StagedFileOrigin,
+        StagedState,
+        UpgradedFrom,
+    )
+    from wiki_system.storage import write_staged
+
+    project_cfg = _make_project(
+        tmp_path,
+        files={"docs/pipeline.md": "# Pipeline\n\nBody.\n"},
+    )
+
+    # First sync — establishes a raw staged file
+    first = run_sync(
+        wiki_root=wiki_root, project_cfg=project_cfg, sync_cfg=_sync_cfg()
+    )
+    assert len(first.created) == 1
+    raw_path = first.created[0]
+
+    # Simulate capture upgrade: delete the raw file, write a proposed
+    # file with upgraded_from.source_artifact matching docs/pipeline.md
+    # (this is what submit_capture does in the --from-staged branch)
+    raw_path.unlink()
+    fm = PageFrontmatter(
+        id="demo-pipeline",
+        title="Demo Pipeline",
+        summary="",
+        type=PageType.SYSTEM,
+        project="demo",
+        domains=["pipeline"],
+        status=PageStatus.ACTIVE,
+        aliases=[],
+        sources=["docs/pipeline.md"],
+        related=[],
+        updated_at=date(2026, 4, 12),
+        confidence=Confidence.HIGH,
+    )
+    proposed = StagedFile(
+        state=StagedState.PROPOSED,
+        origin=StagedFileOrigin.CAPTURE,
+        created_at=datetime(2026, 4, 12, 14, 35, tzinfo=timezone.utc),
+        created_by="capture",
+        proposed_action=ProposedAction.CREATE,
+        target_page_id=None,
+        upgraded_from=UpgradedFrom(
+            raw_file="staging/old-raw.md",
+            origin=StagedFileOrigin.SYNC,
+            trigger="manual",
+            source_artifact="docs/pipeline.md",
+        ),
+        canonical_page=CanonicalPageEmbed(frontmatter=fm, body="# Body\n"),
+    )
+    write_staged(wiki_root, "demo", proposed, "", slug="proposed-pipeline")
+
+    # Second sync — must NOT create a new raw file; must skip with reason
+    second = run_sync(
+        wiki_root=wiki_root, project_cfg=project_cfg, sync_cfg=_sync_cfg()
+    )
+    assert second.created == [], (
+        "sync incorrectly created a new raw file for a source already "
+        "covered by a proposed staged file"
+    )
+    assert len(second.skipped) == 1
+    assert "docs/pipeline.md" in second.skipped[0]
+    assert "already upgraded to proposed" in second.skipped[0]
+
+
+def test_sync_force_preserves_proposed_files(
+    wiki_root: Path, tmp_path: Path
+):
+    """--force must only delete raw files in scope. Proposed files with
+    matching upgraded_from.source_artifact must survive --force, and
+    the occupancy map must still treat them as occupied (so no duplicate
+    raw file is created for that source).
+    """
+    from datetime import datetime, timezone
+
+    from wiki_system.schema import (
+        CanonicalPageEmbed,
+        Confidence,
+        PageFrontmatter,
+        PageStatus,
+        PageType,
+        ProposedAction,
+        StagedFile,
+        StagedFileOrigin,
+        StagedState,
+        UpgradedFrom,
+    )
+    from wiki_system.storage import list_staged, write_staged
+
+    project_cfg = _make_project(
+        tmp_path,
+        files={
+            "docs/a.md": "# A\n",
+            "docs/b.md": "# B\n",
+        },
+    )
+    # Initial sync — two raw files
+    first = run_sync(
+        wiki_root=wiki_root, project_cfg=project_cfg, sync_cfg=_sync_cfg()
+    )
+    assert len(first.created) == 2
+
+    # Upgrade docs/a.md's raw file to proposed (simulate capture)
+    for p in first.created:
+        from wiki_system.storage import read_staged
+        s, _ = read_staged(p)
+        if s.source_artifact == "docs/a.md":
+            p.unlink()
+            break
+    fm_a = PageFrontmatter(
+        id="demo-a",
+        title="A",
+        summary="",
+        type=PageType.SYSTEM,
+        project="demo",
+        domains=[],
+        status=PageStatus.ACTIVE,
+        aliases=[],
+        sources=["docs/a.md"],
+        related=[],
+        updated_at=date(2026, 4, 12),
+        confidence=Confidence.HIGH,
+    )
+    write_staged(
+        wiki_root,
+        "demo",
+        StagedFile(
+            state=StagedState.PROPOSED,
+            origin=StagedFileOrigin.CAPTURE,
+            created_at=datetime(2026, 4, 12, 14, 35, tzinfo=timezone.utc),
+            created_by="capture",
+            proposed_action=ProposedAction.CREATE,
+            target_page_id=None,
+            upgraded_from=UpgradedFrom(
+                raw_file="staging/old-a.md",
+                origin=StagedFileOrigin.SYNC,
+                trigger="manual",
+                source_artifact="docs/a.md",
+            ),
+            canonical_page=CanonicalPageEmbed(frontmatter=fm_a, body="# A\n"),
+        ),
+        "",
+        slug="proposed-a",
+    )
+
+    # --force on the whole project. The raw for docs/b.md gets deleted
+    # and re-created. The proposed for docs/a.md is preserved and docs/a.md
+    # is skipped (no duplicate raw created).
+    result = run_sync(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        sync_cfg=_sync_cfg(),
+        force=True,
+    )
+    assert len(result.removed) == 1  # only the b.md raw was deleted
+    assert len(result.created) == 1  # only b.md re-created
+    assert any("docs/a.md" in s and "already upgraded" in s for s in result.skipped)
+    # The proposed file for docs/a.md survived
+    all_staged = [
+        read_staged(p)[0] for p in list_staged(wiki_root, "demo")
+    ]
+    proposed_for_a = [
+        s
+        for s in all_staged
+        if s.state == StagedState.PROPOSED.value
+        and s.upgraded_from
+        and s.upgraded_from.source_artifact == "docs/a.md"
+    ]
+    assert len(proposed_for_a) == 1
 
 
 def test_sync_handles_multiple_source_globs(wiki_root: Path, tmp_path: Path):

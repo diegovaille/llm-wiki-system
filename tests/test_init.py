@@ -91,6 +91,33 @@ def test_seed_wiki_config_copies_example_when_missing(tmp_path: Path):
     assert "[[projects]]" in cfg.wiki_config_path.read_text()
 
 
+def test_seed_wiki_config_runs_git_init_on_fresh_data_repo(tmp_path: Path):
+    """A fresh wiki data repo must end up as a real git repo so the
+    spec's versioned-manifest story works without manual `git init`.
+    """
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    cfg = resolve_config(fake_ws, wiki_data, agents_dir, claude_dir)
+    assert not (wiki_data / ".git").exists()  # fresh
+    seed_wiki_config_if_missing(cfg)
+    assert (cfg.wiki_data_root / ".git").exists()
+    assert (cfg.wiki_data_root / ".git").is_dir()
+
+
+def test_seed_wiki_config_preserves_existing_git_repo(tmp_path: Path):
+    """If the data root is already a git repo, don't re-init it."""
+    import subprocess as sp
+
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    cfg = resolve_config(fake_ws, wiki_data, agents_dir, claude_dir)
+    wiki_data.mkdir()
+    sp.run(["git", "init", "--quiet"], cwd=wiki_data, check=True)
+    marker = wiki_data / ".git" / "wiki-init-marker"
+    marker.write_text("preserve me")
+    seed_wiki_config_if_missing(cfg)
+    # The pre-existing .git/ wasn't wiped
+    assert marker.read_text() == "preserve me"
+
+
 def test_seed_wiki_config_noop_when_present(tmp_path: Path):
     fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
     cfg = resolve_config(fake_ws, wiki_data, agents_dir, claude_dir)

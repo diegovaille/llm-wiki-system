@@ -148,6 +148,51 @@ def test_cli_query_no_results_exit_2(wiki_root: Path, tmp_path: Path):
     assert r.exit_code == 2
 
 
+def test_cli_query_missing_index_exits_with_actionable_error(
+    wiki_root: Path, tmp_path: Path
+):
+    """On a fresh project with no .wiki-index.json, `wiki query` must NOT
+    produce a Python traceback. It must print a clean stderr message
+    telling the user to run `wiki index <project>` first, and exit 2.
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    _seed(wiki_root)
+    # Deliberately skip `wiki index` — no .wiki-index.json exists
+    runner = _runner()
+    r = runner.invoke(
+        main, ["--config", str(cfg_path), "query", "demo", "story pipeline"]
+    )
+    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert "wiki index" in r.stderr
+    assert "not found" in r.stderr
+    # Traceback must not leak to stderr
+    assert "Traceback" not in r.stderr
+    assert "FileNotFoundError" not in r.stderr
+
+
+def test_cli_query_stale_schema_version_exits_with_actionable_error(
+    wiki_root: Path, tmp_path: Path
+):
+    """If .wiki-index.json exists but has a stale schema_version, query
+    must exit 2 with a clean rebuild instruction, not raise ValueError.
+    """
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    _seed(wiki_root)
+    # Build the index, then hand-corrupt the schema version
+    runner = _runner()
+    runner.invoke(main, ["--config", str(cfg_path), "index", "demo"])
+    index_path = wiki_root / "demo" / ".wiki-index.json"
+    payload = json.loads(index_path.read_text())
+    payload["schema_version"] = 99  # future version we don't know how to read
+    index_path.write_text(json.dumps(payload))
+    r = runner.invoke(
+        main, ["--config", str(cfg_path), "query", "demo", "story pipeline"]
+    )
+    assert r.exit_code == 2, (r.stdout, r.stderr)
+    assert "wiki index" in r.stderr
+    assert "Traceback" not in r.stderr
+
+
 def test_cli_capture_prepare_emits_json(wiki_root: Path, tmp_path: Path):
     cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
     runner = _runner()
