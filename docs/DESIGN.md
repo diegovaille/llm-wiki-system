@@ -789,6 +789,27 @@ Every core command honors this contract. Adapters can rely on it.
 
 The core of Section 6.5's `wiki sync` shipped in v0.1.1 as a manually-invoked command (no hooks, no event argument). It walks `[[projects]] source_globs`, creates `state: raw` staged files per matched artifact (inline under `inline_threshold_bytes`, pointer otherwise), dedupes by `source_artifact` path, and supports `--path <subtree>` scoping plus `--force` to re-stage. This is the operational bridge between existing repo docs and the capture loop; full hook-driven automation remains v0.2. The `/wiki-capture --from-staged=<path>` branch on the Claude adapter handles the downstream upgrade-to-proposed step.
 
+**v0.2.0 addendum — single-question `wiki bootstrap`:**
+
+`wiki bootstrap` landed as a single-question-mode slice in v0.2.0. It is the question-led complement to `wiki sync` (which is doc-led). Commands:
+
+- `wiki bootstrap prepare <project> --question "<text>" [--ad-hoc] [--paths <subtree>] [--limit-docs=5] [--replace-pending]` — resolves the question against `queries/seed-questions.md` (exact or unambiguous substring match; typos require explicit `--ad-hoc`), pulls top existing pages via `run_query`, scores source docs by token overlap, and emits a `PromptPackage` on stdout with the same shape as `capture prepare`.
+- `wiki bootstrap submit <project> --proposal=<path-or-->` — validates a proposal that MUST include a top-level `bootstrap_question` block echoing the question provenance, and writes a `state: proposed + origin: bootstrap` staged file via the shared `staging_write.write_proposed_staged_file` helper (extracted from `capture submit` in the same release).
+
+**New schema field:** `StagedFile.bootstrap_from: BootstrapFrom | None`. `BootstrapFrom` carries `question_text`, `question_source` (seed | ad-hoc), `question_key` (normalized slug used for dedupe), and optional `question_line` (1-based line in `seed-questions.md` for seed sources). Validator rule: `bootstrap_from` is forbidden on `raw` files and on `proposed + origin != bootstrap`; permitted (and populated by the writer) on `proposed + origin == bootstrap`. Soft-required via writer convention so any pre-v0.2.0 hand-written bootstrap files without the provenance field still parse.
+
+**New shared helper:** `src/wiki_system/staging_write.py` extracts the proposal-validation + staged-file-write path so both `capture submit` and `bootstrap submit` delegate to the same helper. Command-specific rejection types (`SubmitRejection` vs `BootstrapRejection`) wrap the shared `StagingWriteError` to keep external contracts distinct.
+
+**Dedupe:** path-based via `bootstrap_from.question_key`. If a pending bootstrap proposal exists for the same question, prepare and submit both refuse unless `--replace-pending`, which deletes the existing pending file on submit.
+
+**Pluggable skill:** the bootstrap adapter ships as a SEPARATE skill file at `~/.agents/skills/wiki-bootstrap/SKILL.md` (symlinked into `~/.claude/skills/wiki-bootstrap`) rather than inlining bootstrap guidance into the main `wiki` skill. The main `wiki` skill keeps a one-line reference pointing to the sub-skill. Adding future sub-skills (e.g. wiki-review-ui) requires zero `init.py` changes — the renderer and symlink installer auto-discover every `templates/skills/<name>/` directory.
+
+**Explicit v0.2.0 scope:**
+
+- In: single-question prepare/submit, `--ad-hoc` fallback, `--paths` narrowing, `--replace-pending`, `--limit-docs`
+- Out (deferred to v0.2.1): `--all` loop mode, `--max-proposals` cross-question cap, multi-question slash command branch
+- Out (explicitly rejected for v0.2): embeddings-based source scoring, automatic page merging, cross-project bootstrap
+
 **Why start with hand-written pages instead of `bootstrap`:**
 - Forces a firsthand feel for the schema
 - Surfaces frontmatter friction before an LLM amplifies it

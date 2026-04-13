@@ -37,7 +37,7 @@ The `wiki` CLI takes a `<project>` argument. Detect the current project by match
 
 Do NOT capture routine implementation, obvious bug fixes, small refactors, or transient exploration. Default to no-op. When in doubt, prefer update over create.
 
-## Six operations
+## Seven operations
 
 1. `WIKI query` — deterministic retrieval (lexical + link-graph)
 2. `WIKI index` — rebuild retrieval index + regenerate views
@@ -45,6 +45,7 @@ Do NOT capture routine implementation, obvious bug fixes, small refactors, or tr
 4. `WIKI promote` — the only path from staging to pages
 5. `WIKI review` (via `/wiki-review`) — list pending staged items
 6. `WIKI sync` (via `/wiki-sync`) — register project docs as `state: raw` staged files for later distillation via `/wiki-capture --from-staged=<path>`
+7. `WIKI bootstrap prepare` / `WIKI bootstrap submit` (via `/wiki-bootstrap`) — answer a seed question with exactly one canonical page, synthesized from existing pages + top source docs. The full protocol lives in the **`wiki-bootstrap` sub-skill** — a separate pluggable skill that you should consult when the user wants question-led wiki growth.
 
 ## Two ways content enters the wiki
 
@@ -58,6 +59,8 @@ Do NOT capture routine implementation, obvious bug fixes, small refactors, or tr
 4. `/wiki-promote <staging-path>` — canonicalizes it
 
 Staged-upgrade pages record the original `source_artifact` in sources, so the audit trail from repo doc to wiki page is exact. Prefer scoped sync (`--path docs/technical/`) over whole-repo sync to avoid overwhelming the review queue.
+
+**Seed-question-driven bootstrap.** The user wants to answer a specific question from `queries/seed-questions.md` (or an explicit ad-hoc question) by synthesizing one canonical page from the best available evidence. Question-led, not doc-led. Uses a parallel `prepare`/`submit` pair (`WIKI bootstrap prepare` / `WIKI bootstrap submit`), NOT `capture submit`. Full guidance is in the **`wiki-bootstrap` sub-skill** — consult it when the user asks to "answer question X in the wiki" or "grow the wiki from the seed questions."
 
 ## Prepare/submit protocol
 

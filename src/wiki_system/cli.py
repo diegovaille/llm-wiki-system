@@ -8,6 +8,11 @@ from typing import Any
 
 import click
 
+from wiki_system.bootstrap import (
+    BootstrapRejection,
+    run_prepare_bootstrap,
+    run_submit_bootstrap,
+)
 from wiki_system.capture import (
     SubmitRejection,
     prepare_capture,
@@ -371,6 +376,177 @@ def review(ctx: click.Context, project: str) -> None:
 
     _emit(ctx, payload, _text)
     if not items:
+        ctx.exit(3)
+
+
+# ---------- bootstrap ----------
+
+
+@main.group()
+def bootstrap() -> None:
+    """Seed-question-driven page synthesis (prepare/submit)."""
+
+
+@bootstrap.command("prepare")
+@click.argument("project")
+@click.option(
+    "--question",
+    "question_arg",
+    required=True,
+    help=(
+        "The seed question (or substring thereof) to bootstrap. Matched "
+        "against queries/seed-questions.md — exact or unambiguous substring. "
+        "To run with a free-text question that is NOT in the seed file, also "
+        "pass --ad-hoc."
+    ),
+)
+@click.option(
+    "--ad-hoc",
+    is_flag=True,
+    help=(
+        "Allow --question to be free text that doesn't match any seed "
+        "question. Without this flag, mismatched --question is an error "
+        "(prevents typos from silently becoming ad-hoc runs)."
+    ),
+)
+@click.option(
+    "--limit-docs",
+    default=5,
+    type=int,
+    help="Max number of source docs to include in the prompt package. Default: 5.",
+)
+@click.option(
+    "--paths",
+    "path_filter",
+    default=None,
+    help=(
+        "Restrict source doc candidates to a repo-relative prefix "
+        "(e.g. 'docs/technical/'). Narrows within source_globs."
+    ),
+)
+@click.option(
+    "--replace-pending",
+    is_flag=True,
+    help=(
+        "Allow prepare even if a pending bootstrap proposal already exists "
+        "for this question_key. The pending file is kept on disk; submit "
+        "with --replace-pending deletes it."
+    ),
+)
+@click.pass_context
+def bootstrap_prepare(
+    ctx: click.Context,
+    project: str,
+    question_arg: str,
+    ad_hoc: bool,
+    limit_docs: int,
+    path_filter: str | None,
+    replace_pending: bool,
+) -> None:
+    """Build a prompt package for a single seed-or-ad-hoc question.
+
+    Emits the PromptPackage as JSON on stdout (same shape as
+    `capture prepare`). The agent reads it, synthesizes a proposal,
+    and calls `wiki bootstrap submit`.
+    """
+    cfg = _load_config_or_die(ctx)
+    project_cfg = _get_project_or_die(ctx, cfg, project)
+    wiki_root = cfg.wiki_root_path()
+    try:
+        result = run_prepare_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            retrieval_cfg=cfg.retrieval,
+            question_arg=question_arg,
+            ad_hoc=ad_hoc,
+            limit_docs=limit_docs,
+            path_filter=path_filter,
+            replace_pending=replace_pending,
+        )
+    except BootstrapRejection as e:
+        click.echo(str(e), err=True)
+        ctx.exit(2)
+    click.echo(result.package.to_json())
+
+
+@bootstrap.command("submit")
+@click.argument("project")
+@click.option(
+    "--proposal",
+    required=True,
+    help=(
+        "Path to a proposal JSON file, or '-' to read from stdin. "
+        "Same rules as `capture submit --proposal`: prefer a file path "
+        "for anything with a non-trivial canonical_page.body to avoid "
+        "shell-heredoc corruption."
+    ),
+)
+@click.option(
+    "--replace-pending",
+    is_flag=True,
+    help=(
+        "If a pending bootstrap proposal already exists for this question, "
+        "delete it and write the new one. Without this flag, submit refuses."
+    ),
+)
+@click.pass_context
+def bootstrap_submit(
+    ctx: click.Context,
+    project: str,
+    proposal: str,
+    replace_pending: bool,
+) -> None:
+    """Validate a bootstrap proposal and write a state: proposed staged file."""
+    cfg = _load_config_or_die(ctx)
+    _get_project_or_die(ctx, cfg, project)
+    wiki_root = cfg.wiki_root_path()
+    try:
+        if proposal == "-":
+            raw_proposal = sys.stdin.read()
+        else:
+            raw_proposal = Path(proposal).read_text()
+    except FileNotFoundError as e:
+        click.echo(f"proposal file not found: {e}", err=True)
+        ctx.exit(1)
+    try:
+        proposal_data = json.loads(raw_proposal)
+    except json.JSONDecodeError as e:
+        lines = [f"proposal JSON invalid: {e}"]
+        if proposal == "-":
+            lines.append(
+                "Hint: if you piped via bash heredoc, embedded backticks/"
+                "pipes/backslashes may be corrupted. Write to a file and "
+                "pass --proposal=<file-path>."
+            )
+        click.echo("\n".join(lines), err=True)
+        ctx.exit(2)
+    try:
+        result = run_submit_bootstrap(
+            wiki_root=wiki_root,
+            project=project,
+            proposal=proposal_data,
+            replace_pending=replace_pending,
+        )
+    except BootstrapRejection as e:
+        click.echo(str(e), err=True)
+        ctx.exit(2)
+    payload = {
+        "action": result.action,
+        "staging_path": result.staging_path,
+        "proposed_page_id": result.proposed_page_id,
+        "question_key": result.question_key,
+    }
+
+    def _text(p):
+        if p["action"] == "noop":
+            return f"noop: no staged file written for question {p['question_key']!r}"
+        return (
+            f"staged: {p['action']} {p['proposed_page_id']} -> {p['staging_path']} "
+            f"(question: {p['question_key']})"
+        )
+
+    _emit(ctx, payload, _text)
+    if result.action == "noop":
         ctx.exit(3)
 
 

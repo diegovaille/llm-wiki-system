@@ -180,23 +180,51 @@ def write_adapter(rendered: dict[Path, str]) -> list[Path]:
     return sorted(written)
 
 
-def install_claude_symlinks(cfg: InitConfig) -> list[tuple[Path, Path]]:
+def install_claude_symlinks(
+    cfg: InitConfig, rendered: dict[Path, str] | None = None
+) -> list[tuple[Path, Path]]:
     """Create Claude Code symlinks pointing at canonical agents_dir files.
 
     Writes:
-    - claude_dir/skills/wiki          → agents_dir/skills/wiki (directory)
-    - claude_dir/commands/wiki-*.md   → agents_dir/commands/wiki-*.md (files)
+    - claude_dir/skills/<name>     → agents_dir/skills/<name> (directory)
+      for every skill directory we just rendered under agents_dir/skills/.
+      Pluggable: any sub-skill under templates/skills/<name>/ is picked
+      up automatically — no hardcoded "wiki" special case.
+    - claude_dir/commands/wiki-*.md → agents_dir/commands/wiki-*.md (files)
 
-    Returns a list of `(symlink_path, target_path)` pairs that were created.
-    Existing symlinks or files at the destinations are overwritten. The
-    skill is symlinked at the directory level (matches the existing
-    convention for other shared skills under ~/.claude/skills/).
+    `rendered` is the output of `render_adapter`. Skill directories are
+    derived from it (which avoids picking up unrelated skills under
+    ~/.agents/skills/ that belong to other plugins). If `rendered` is
+    omitted, falls back to scanning `agents_dir/skills/` — less precise
+    but keeps the function usable in isolation for tests.
+
+    Returns a list of `(symlink_path, target_path)` pairs that were
+    created. Existing symlinks, real files, or real directories at the
+    destinations are replaced.
     """
     links: list[tuple[Path, Path]] = []
-    # Skill (whole directory)
-    skill_src = cfg.agents_dir / "skills" / "wiki"
-    skill_dest = cfg.claude_dir / "skills" / "wiki"
-    if skill_src.exists():
+
+    # Discover skill directories. Derive from the rendered set when we
+    # have it, so we never accidentally symlink skills we didn't author.
+    skill_dirs: set[Path] = set()
+    if rendered is not None:
+        for dest in rendered:
+            try:
+                rel = dest.relative_to(cfg.agents_dir)
+            except ValueError:
+                continue  # generated snippet, outside agents_dir
+            parts = rel.parts
+            if len(parts) >= 2 and parts[0] == "skills":
+                skill_dirs.add(cfg.agents_dir / "skills" / parts[1])
+    else:
+        skills_root = cfg.agents_dir / "skills"
+        if skills_root.exists():
+            skill_dirs.update(
+                p for p in skills_root.iterdir() if p.is_dir()
+            )
+
+    for skill_src in sorted(skill_dirs):
+        skill_dest = cfg.claude_dir / "skills" / skill_src.name
         skill_dest.parent.mkdir(parents=True, exist_ok=True)
         if skill_dest.is_symlink() or skill_dest.exists():
             if skill_dest.is_dir() and not skill_dest.is_symlink():
@@ -205,7 +233,8 @@ def install_claude_symlinks(cfg: InitConfig) -> list[tuple[Path, Path]]:
                 skill_dest.unlink()
         os.symlink(skill_src, skill_dest)
         links.append((skill_dest, skill_src))
-    # Commands (per-file symlinks)
+
+    # Commands (per-file symlinks; glob is broad enough to pick up new files)
     commands_src = cfg.agents_dir / "commands"
     commands_dest = cfg.claude_dir / "commands"
     if commands_src.exists():
@@ -253,7 +282,7 @@ def run_init(
     seeded = seed_wiki_config_if_missing(cfg)
     rendered = render_adapter(cfg)
     written = write_adapter(rendered)
-    symlinks = install_claude_symlinks(cfg)
+    symlinks = install_claude_symlinks(cfg, rendered)
     return InitResult(
         rendered=written,
         symlinks=symlinks,

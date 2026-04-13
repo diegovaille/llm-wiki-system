@@ -1,0 +1,123 @@
+---
+name: wiki-bootstrap
+description: Use when the user wants to distill a seed question (or ad-hoc question) from queries/seed-questions.md into a new or updated canonical wiki page. This is question-led synthesis, not doc-led. For "compile this doc into a page" use /wiki-sync + /wiki-capture instead. For "capture what just happened in this session" use /wiki-capture session-origin mode.
+---
+
+# Wiki bootstrap skill
+
+This is the pluggable bootstrap sub-skill of the wiki plugin. The core `wiki` skill describes the shared schema, permissions, and operations; this skill covers the bootstrap-specific prepare/submit protocol.
+
+`wiki bootstrap` is the complement to `wiki sync`:
+
+- **sync** starts from *existing documentation* and registers each doc as a raw staged file for later distillation
+- **bootstrap** starts from *seed questions* and synthesizes exactly one canonical page per question using the best evidence available from the wiki and the repo
+
+Both write `state: proposed` staged files that go through the same `wiki promote` flow. Bootstrap-originated staged files carry a `bootstrap_from` block recording which question drove them, so the audit trail is explicit.
+
+## Binary (absolute path — NOT on PATH)
+
+```
+{{WIKI_CMD}}
+```
+
+Below, `WIKI` refers to that absolute invocation.
+
+## When to use bootstrap
+
+- The user asks "what do we know about X?" where X is a question with no good existing wiki page
+- The user wants to start growing the wiki from `queries/seed-questions.md`
+- The user wants an ad-hoc deep-dive into a topic they'll cite the source docs for
+
+## When NOT to use bootstrap
+
+- "Compile this doc" → use `/wiki-sync --path <doc>` then `/wiki-capture <staging-path>`
+- "Capture what we just decided" → use `/wiki-capture` session-origin mode
+- "Add a new page by hand" → edit through the CLI/promote flow, not through bootstrap
+- Routine implementation notes, bug fixes, and transient decisions — same under-capture bias as `/wiki-capture`
+
+## Two-step prepare/submit protocol
+
+Bootstrap uses the same prepare/submit shape as capture, but the commands are distinct because the provenance and lifecycle are distinct:
+
+1. `WIKI bootstrap prepare <project> --question "..."` — emits a prompt package JSON with project intent, the resolved seed question, top existing canonical pages, and top source doc candidates scored by token overlap
+2. You (Claude) read the package, synthesize ONE proposal that answers the question
+3. `WIKI bootstrap submit <project> --proposal <path>` — validates the proposal (including the required `bootstrap_question` provenance block) and writes a `state: proposed + origin: bootstrap` staged file
+4. `WIKI promote <project> <staging-path> --apply` — canonicalizes
+
+## Steps
+
+1. **Detect the project name** from the current repo path vs `[[projects]] repo_path` in `{{WIKI_CONFIG_PATH}}`.
+
+2. **Resolve the question.** If the user gave you text that unambiguously matches one of the seed questions in `{{WIKI_DATA_ROOT}}/<project>/queries/seed-questions.md`, use that. Otherwise, if the user explicitly wants an ad-hoc question not in the seed file, include `--ad-hoc`. Never guess — ambiguous substring matches are rejected by the CLI, and mismatched substring matches without `--ad-hoc` are rejected too.
+
+3. **Run prepare:**
+   ```bash
+   WIKI bootstrap prepare <project> --question "<seed-match or exact text>" [--ad-hoc] [--paths docs/technical/] [--limit-docs=5]
+   ```
+   Default `--limit-docs` is 5. Use `--paths` to narrow source doc candidates to a repo subtree when the user has a specific area in mind. If a pending bootstrap proposal already exists for this question, the command fails with `BootstrapRejection` — tell the user and suggest either `/wiki-review` to look at the pending one, or `--replace-pending` if they want to regenerate.
+
+4. **Read the prompt package.** It will have `system`, `context`, `schema`, `instructions`, `allowed_actions` fields. The `context` includes:
+   - Project intent (`meta/project.md` body)
+   - The resolved seed question + provenance block
+   - Top-ranked existing canonical pages (read their bodies — this is where you decide noop/update)
+   - Top-ranked source doc candidates with scored excerpts
+
+5. **Synthesize exactly ONE proposal.** Same underlying rules as `/wiki-capture`:
+   - Bias **hard** toward `update` when an existing page above is a reasonable home for this answer
+   - Bias toward `noop` when the existing pages already answer the question, or when the source doc evidence is too weak to produce a confident page
+   - Only `create` when no existing page covers the topic and the evidence is solid
+   - For `update`, `target_page_id` MUST equal `canonical_page.frontmatter.id`
+   - `canonical_page.frontmatter.sources` SHOULD cite the source docs you actually used (e.g. `docs/technical/pipeline-architecture.md`). Don't fabricate citations.
+   - **MUST include a top-level `bootstrap_question` block** echoing the provenance from the prompt package verbatim:
+     ```json
+     {
+       "question_text": "...",
+       "question_source": "seed",
+       "question_key": "...",
+       "question_line": 3
+     }
+     ```
+
+6. **Write the proposal to a tmpfile and submit.** Use the same heredoc-avoidance pattern as capture:
+   ```bash
+   python3 -c '
+   import json
+   data = { ... the full proposal including bootstrap_question ... }
+   json.dump(data, open("/tmp/wiki_bootstrap_proposal.json", "w"))
+   '
+   WIKI bootstrap submit <project> --proposal /tmp/wiki_bootstrap_proposal.json
+   ```
+   - Exit 0: staged file was written. Extract `staging_path` from JSON output.
+   - Exit 3: `action: noop` — nothing was staged.
+   - Exit 2: schema invalid, or `bootstrap_question` missing, or a pending proposal already exists for this question. Show the error and stop.
+
+7. **Auto-chain promote** on non-noop:
+   ```bash
+   WIKI promote <project> <staging_path> --apply
+   ```
+   Same exit-code handling as capture: 0 = done, anything else = leave staged file alone and tell the user.
+
+## Hard rules
+
+- **One question per invocation.** Do not batch multiple seed questions in a single proposal. `--all` mode is v0.2.1, not now.
+- **Always include `bootstrap_question` provenance** in the proposal. Submit rejects proposals without it.
+- **Never hallucinate sources.** Only cite source docs you actually read from the prompt package.
+- **Bias toward update over create, and noop over both.** Same under-capture ethos as regular capture.
+- **Never run bootstrap autonomously mid-session.** Wait for the user to ask.
+- **Never edit files under `{{WIKI_DATA_ROOT}}/<project>/pages/` or `views/`.** All writes go through `WIKI promote`.
+
+## Example invocations
+
+```bash
+# Happy path — seed question match
+WIKI bootstrap prepare myproject --question "story pipeline"
+
+# Narrow source docs to a subtree
+WIKI bootstrap prepare myproject --question "authentication flow" --paths docs/security/
+
+# Ad-hoc deep-dive not in seed-questions.md
+WIKI bootstrap prepare myproject --question "how does the rate limiter work" --ad-hoc
+
+# Regenerate after rejecting a previous pending proposal
+WIKI bootstrap prepare myproject --question "story pipeline" --replace-pending
+```

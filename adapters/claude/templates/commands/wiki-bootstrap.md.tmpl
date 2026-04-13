@@ -1,0 +1,27 @@
+---
+name: wiki-bootstrap
+description: Seed-question-driven wiki page synthesis. Answer one seed question from queries/seed-questions.md with exactly one canonical change.
+---
+
+**Binary (absolute path — NOT on PATH):**
+`{{WIKI_CMD}}`
+
+Below, `WIKI` refers to that absolute invocation.
+
+Full protocol, rules, and examples live in the `wiki-bootstrap` skill (installed as a separate skill file). This slash command is the minimal invocation handle — the skill does the heavy lifting.
+
+Quick summary:
+
+1. Detect the project name from the current repo path.
+2. Resolve the user's question against `{{WIKI_DATA_ROOT}}/<project>/queries/seed-questions.md`. Exact or unambiguous substring match. If the user explicitly wants a question not in the seed file, include `--ad-hoc`. Never silently fall back.
+3. Run: `WIKI bootstrap prepare <project> --question "..." [--ad-hoc] [--paths docs/technical/] [--limit-docs=5]`
+4. Read the prompt package. Synthesize exactly ONE proposal. Bias toward update/noop over create. Include the `bootstrap_question` provenance block verbatim.
+5. Write the proposal to a tmpfile with `python3 -c 'import json; json.dump(...)'` (never heredoc), then run: `WIKI bootstrap submit <project> --proposal /tmp/wiki_bootstrap_proposal.json`
+6. On non-noop success, auto-chain: `WIKI promote <project> <staging_path> --apply`.
+
+Exit codes:
+- `0` proposal written (or promote succeeded)
+- `2` schema invalid, ambiguous question, missing provenance, or pending duplicate — show the stderr message and stop
+- `3` action=noop, nothing to promote
+
+**Hard rules:** one question per invocation, always echo `bootstrap_question` provenance, never fabricate sources, never hand-edit pages/ or views/. Full guidance in the `wiki-bootstrap` skill.
