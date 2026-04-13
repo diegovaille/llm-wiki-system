@@ -92,13 +92,38 @@ class SourceDocCandidate:
 
 @dataclass
 class BootstrapPrepareResult:
-    """Everything the CLI emits on `wiki bootstrap prepare`."""
+    """Everything the CLI emits on `wiki bootstrap prepare`.
+
+    In single-question mode (--question), exactly one result is
+    produced, `remaining_questions` is None, and `max_proposals_hint`
+    is None.
+
+    In --all mode, the caller receives the prompt package for the next
+    unprocessed seed question, `remaining_questions` is the count of
+    seed questions left (including the current one, so callers know
+    "this is question 3 of 5") and `max_proposals_hint` carries the
+    --max-proposals value so the slash command template can bound its
+    own loop.
+    """
 
     question: BootstrapQuestion
     package: PromptPackage
     existing_page_ids: list[str] = field(default_factory=list)
     source_doc_paths: list[str] = field(default_factory=list)
     existing_pending_path: Path | None = None
+    remaining_questions: int | None = None
+    max_proposals_hint: int | None = None
+
+
+class BootstrapAllExhausted(BootstrapRejection):
+    """Raised by run_prepare_bootstrap(all_mode=True) when every seed
+    question in `seed-questions.md` already has a pending proposed
+    staged file — i.e. there's nothing left for --all to do.
+
+    The CLI catches this and exits 3 (noop/nothing-to-do) rather than
+    treating it as an error. Distinct from BootstrapRejection so the
+    CLI can tell "no work to do" apart from "something was invalid."
+    """
 
 
 @dataclass
@@ -319,14 +344,42 @@ def _build_prepare_context(
     question: BootstrapQuestion,
     existing_pages: list[tuple[str, str, str, str]],  # (id, title, summary, body)
     source_docs: list[SourceDocCandidate],
+    all_mode: bool = False,
+    remaining_count: int | None = None,
+    max_proposals: int | None = None,
 ) -> str:
     """Assemble the prompt package's context string.
 
     The agent reads this verbatim. Order matters: project intent first
     (what belongs in the wiki), then the question, then existing pages
     (so the agent biases toward update), then raw source docs.
+
+    In --all mode, an "All-mode status" section is prepended so the
+    agent sees how many questions remain and what the session
+    submission cap is.
     """
     parts: list[str] = []
+
+    if all_mode:
+        parts.append("## All-mode status")
+        if remaining_count is not None:
+            parts.append(
+                f"- This is question 1 of {remaining_count} remaining "
+                f"unprocessed seed questions."
+            )
+        if max_proposals is not None:
+            parts.append(
+                f"- Session cap (`--max-proposals`): {max_proposals}. "
+                f"After {max_proposals} successful submits in this session, "
+                f"stop calling `wiki bootstrap prepare --all` and wait for "
+                f"the user to continue."
+            )
+        parts.append(
+            "- Each `prepare --all` invocation returns exactly ONE question. "
+            "Process this one fully (prepare → submit → promote) before "
+            "re-invoking `prepare --all` for the next question."
+        )
+        parts.append("")
 
     if project_intent:
         parts.append("## Project intent")
@@ -395,9 +448,21 @@ def _build_prepare_context(
     return "\n".join(parts)
 
 
-def _build_prepare_instructions(question: BootstrapQuestion) -> str:
-    """Bootstrap-specific agent instructions. Parallel to capture's."""
-    return (
+def _build_prepare_instructions(
+    question: BootstrapQuestion,
+    *,
+    all_mode: bool = False,
+    remaining_count: int | None = None,
+    max_proposals: int | None = None,
+) -> str:
+    """Bootstrap-specific agent instructions. Parallel to capture's.
+
+    In --all mode the instructions add a tail paragraph about the loop
+    protocol: the agent processes one question per invocation, resumes
+    by re-calling `prepare --all` after each submit, and stops at the
+    session cap.
+    """
+    base = (
         f"bootstrap mode. Answer the seed question above with AT MOST ONE "
         f"canonical wiki change: noop, update, or create.\n\n"
         f"- Bias hard toward `update` if an existing page above is a reasonable "
@@ -416,6 +481,67 @@ def _build_prepare_instructions(question: BootstrapQuestion) -> str:
         f"- Produce exactly ONE result. Do not batch multiple questions into "
         f"one proposal."
     )
+    if not all_mode:
+        return base
+    tail_lines = [
+        "",
+        "",
+        "**--all loop protocol:** This is a single question out of several.",
+        "After you submit this proposal (or decide noop), re-invoke",
+        "`wiki bootstrap prepare <project> --all` to get the next question's",
+        "prompt package. Each call returns exactly ONE question. Do not batch.",
+    ]
+    if max_proposals is not None:
+        tail_lines.append(
+            f"Stop after {max_proposals} successful `submit` calls in this "
+            f"session even if the --all queue is not yet empty."
+        )
+    if remaining_count is not None:
+        tail_lines.append(
+            f"Questions remaining including this one: {remaining_count}."
+        )
+    return base + "\n".join(tail_lines)
+
+
+def _pick_next_all_mode_question(
+    wiki_root: Path, project: str, seed_questions: list[BootstrapQuestion]
+) -> tuple[BootstrapQuestion, int]:
+    """Find the first seed question without a pending proposal.
+
+    Iterates seed_questions in file order. Returns the first question
+    whose question_key has NO pending proposed staged file, plus the
+    count of remaining unprocessed questions *including the returned
+    one* (so the caller can report "this is X of Y").
+
+    Raises `BootstrapAllExhausted` when every seed question already has
+    a pending proposal. The caller (CLI) catches this and exits 3.
+
+    A seed question is "processed" for the purposes of this scan when
+    a pending proposed staged file exists with matching `question_key`.
+    Questions that were promoted to `pages/` and archived are NOT
+    considered processed by this function — if the user wants --all to
+    skip already-promoted topics, they should delete the seed question
+    from `seed-questions.md` or pair --all with a follow-up pass that
+    deletes stale seed entries. (v0.2.2 may add a manifest-based check.)
+    """
+    if not seed_questions:
+        raise BootstrapAllExhausted(
+            "queries/seed-questions.md has no seed questions; "
+            "nothing for --all to process"
+        )
+    unprocessed: list[BootstrapQuestion] = []
+    for q in seed_questions:
+        pending = _existing_pending_for_question(wiki_root, project, q.key)
+        if pending is None:
+            unprocessed.append(q)
+    if not unprocessed:
+        raise BootstrapAllExhausted(
+            "every seed question in queries/seed-questions.md already has "
+            "a pending bootstrap proposal. Review or promote them first "
+            "(wiki review <project>), or use --replace-pending on a "
+            "specific --question to regenerate."
+        )
+    return unprocessed[0], len(unprocessed)
 
 
 def run_prepare_bootstrap(
@@ -423,25 +549,60 @@ def run_prepare_bootstrap(
     wiki_root: Path,
     project_cfg: ProjectConfig,
     retrieval_cfg: RetrievalConfig,
-    question_arg: str,
+    question_arg: str | None = None,
+    all_mode: bool = False,
     ad_hoc: bool = False,
     limit_docs: int = DEFAULT_LIMIT_DOCS,
     path_filter: str | None = None,
     replace_pending: bool = False,
+    max_proposals: int | None = None,
 ) -> BootstrapPrepareResult:
-    """Build a PromptPackage for a single seed-or-ad-hoc question.
+    """Build a PromptPackage for a seed question.
 
-    Does not write anything. The caller (CLI or test) emits the package
-    to the agent, which synthesizes a proposal and calls
+    Two modes:
+
+    **Single-question mode** (`all_mode=False`, `question_arg` required):
+    Resolve the given question against seed-questions.md (exact or
+    unambiguous substring match; ad_hoc required for free text). If a
+    pending proposal already exists and `replace_pending` is False,
+    raise. Build the prompt package.
+
+    **--all mode** (`all_mode=True`, `question_arg=None`): Walk the seed
+    questions in file order, pick the first one without a pending
+    proposal, and build a prompt package for it. `remaining_questions`
+    on the result tells the caller "X questions left to process
+    including this one". `max_proposals` is passed through as a hint
+    the slash command template uses to bound its own loop.
+
+    Does not write anything. The caller emits the package to the
+    agent, which synthesizes a proposal and calls
     `run_submit_bootstrap` next.
 
-    Raises `BootstrapRejection` if:
-    - the question can't be resolved and `ad_hoc` is False
-    - a pending proposed file already exists for this question and
-      `replace_pending` is False
+    Raises `BootstrapRejection` for invalid input (missing --question
+    in single mode, unresolvable question without --ad-hoc, pending
+    duplicate without --replace-pending).
+
+    Raises `BootstrapAllExhausted` (a BootstrapRejection subclass) when
+    all_mode=True and every seed question is already processed.
     """
     seed_questions = _load_seed_questions(wiki_root, project_cfg.name)
-    question = resolve_question(question_arg, seed_questions, ad_hoc=ad_hoc)
+
+    remaining_count: int | None = None
+    if all_mode:
+        if question_arg is not None:
+            raise BootstrapRejection(
+                "--all and --question are mutually exclusive"
+            )
+        question, remaining_count = _pick_next_all_mode_question(
+            wiki_root, project_cfg.name, seed_questions
+        )
+    else:
+        if question_arg is None:
+            raise BootstrapRejection(
+                "--question is required in single-question mode "
+                "(or pass --all to iterate seed-questions.md)"
+            )
+        question = resolve_question(question_arg, seed_questions, ad_hoc=ad_hoc)
 
     pending = _existing_pending_for_question(
         wiki_root, project_cfg.name, question.key
@@ -491,8 +652,16 @@ def run_prepare_bootstrap(
         question=question,
         existing_pages=existing_pages,
         source_docs=source_docs,
+        all_mode=all_mode,
+        remaining_count=remaining_count,
+        max_proposals=max_proposals,
     )
-    instructions = _build_prepare_instructions(question)
+    instructions = _build_prepare_instructions(
+        question,
+        all_mode=all_mode,
+        remaining_count=remaining_count,
+        max_proposals=max_proposals,
+    )
 
     package = PromptPackage(
         system=SYSTEM_PROMPT,
@@ -508,6 +677,8 @@ def run_prepare_bootstrap(
         existing_page_ids=[r.id for r in query_results],
         source_doc_paths=[d.path for d in source_docs],
         existing_pending_path=pending,
+        remaining_questions=remaining_count,
+        max_proposals_hint=max_proposals,
     )
 
 

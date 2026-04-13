@@ -9,6 +9,7 @@ from typing import Any
 import click
 
 from wiki_system.bootstrap import (
+    BootstrapAllExhausted,
     BootstrapRejection,
     run_prepare_bootstrap,
     run_submit_bootstrap,
@@ -412,12 +413,34 @@ def bootstrap() -> None:
 @click.option(
     "--question",
     "question_arg",
-    required=True,
+    default=None,
     help=(
         "The seed question (or substring thereof) to bootstrap. Matched "
         "against queries/seed-questions.md — exact or unambiguous substring. "
         "To run with a free-text question that is NOT in the seed file, also "
-        "pass --ad-hoc."
+        "pass --ad-hoc. Mutually exclusive with --all."
+    ),
+)
+@click.option(
+    "--all",
+    "all_mode",
+    is_flag=True,
+    help=(
+        "Iterate queries/seed-questions.md in file order and emit the prompt "
+        "package for the next seed question that has no pending bootstrap "
+        "proposal. Each invocation returns exactly one question; the agent "
+        "re-invokes after each submit. Exits 3 ('nothing to do') when every "
+        "seed question is already processed. Mutually exclusive with --question."
+    ),
+)
+@click.option(
+    "--max-proposals",
+    default=None,
+    type=int,
+    help=(
+        "Session cap for --all mode. Emitted in the prompt package as a hint "
+        "the agent reads and uses to bound its own loop — the CLI does not "
+        "track state across invocations. Ignored in single-question mode."
     ),
 )
 @click.option(
@@ -426,7 +449,8 @@ def bootstrap() -> None:
     help=(
         "Allow --question to be free text that doesn't match any seed "
         "question. Without this flag, mismatched --question is an error "
-        "(prevents typos from silently becoming ad-hoc runs)."
+        "(prevents typos from silently becoming ad-hoc runs). Ignored "
+        "with --all."
     ),
 )
 @click.option(
@@ -457,18 +481,39 @@ def bootstrap() -> None:
 def bootstrap_prepare(
     ctx: click.Context,
     project: str,
-    question_arg: str,
+    question_arg: str | None,
+    all_mode: bool,
+    max_proposals: int | None,
     ad_hoc: bool,
     limit_docs: int,
     path_filter: str | None,
     replace_pending: bool,
 ) -> None:
-    """Build a prompt package for a single seed-or-ad-hoc question.
+    """Build a prompt package for a seed question.
+
+    Single-question mode (`--question`): resolves the question against
+    seed-questions.md and builds one prompt package.
+
+    --all mode: iterates seed-questions.md in file order, picks the next
+    unprocessed question (one with no pending proposal), and builds
+    one prompt package for it. Agents re-invoke `prepare --all` after
+    each successful submit to get the next question. Exits 3 when the
+    queue is drained.
 
     Emits the PromptPackage as JSON on stdout (same shape as
     `capture prepare`). The agent reads it, synthesizes a proposal,
     and calls `wiki bootstrap submit`.
     """
+    if all_mode and question_arg is not None:
+        click.echo("--all and --question are mutually exclusive", err=True)
+        ctx.exit(1)
+    if not all_mode and question_arg is None:
+        click.echo(
+            "either --question or --all is required",
+            err=True,
+        )
+        ctx.exit(1)
+
     cfg = _load_config_or_die(ctx)
     project_cfg = _get_project_or_die(ctx, cfg, project)
     wiki_root = cfg.wiki_root_path()
@@ -478,11 +523,18 @@ def bootstrap_prepare(
             project_cfg=project_cfg,
             retrieval_cfg=cfg.retrieval,
             question_arg=question_arg,
+            all_mode=all_mode,
             ad_hoc=ad_hoc,
             limit_docs=limit_docs,
             path_filter=path_filter,
             replace_pending=replace_pending,
+            max_proposals=max_proposals,
         )
+    except BootstrapAllExhausted as e:
+        # --all queue drained — semantically "nothing to do", exit 3
+        # matching review/capture noop/empty conventions.
+        click.echo(str(e), err=True)
+        ctx.exit(3)
     except BootstrapRejection as e:
         click.echo(str(e), err=True)
         ctx.exit(2)

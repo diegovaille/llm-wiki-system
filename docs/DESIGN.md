@@ -816,6 +816,22 @@ The core of Section 6.5's `wiki sync` shipped in v0.1.1 as a manually-invoked co
 - Out (deferred to v0.2.1): `--all` loop mode, `--max-proposals` cross-question cap, multi-question slash command branch
 - Out (explicitly rejected for v0.2): embeddings-based source scoring, automatic page merging, cross-project bootstrap
 
+**v0.2.1 addendum — `wiki bootstrap --all` loop mode:**
+
+`wiki bootstrap prepare --all` landed in v0.2.1. The CLI is stateless: each `prepare --all` invocation picks the first seed question in `queries/seed-questions.md` that has no pending bootstrap proposal, builds one PromptPackage for it, and returns. The agent processes that one question (prepare → submit → promote), then re-invokes `prepare --all` for the next. Exit code 3 (noop/nothing-to-do) when every seed question already has a pending proposal.
+
+The `--max-proposals` flag is passed through as a hint in the prompt package's `All-mode status` context section. The CLI does not track state or enforce the cap — the slash command template coaches the agent to count successful submits and stop at N. This keeps the CLI stateless and avoids session files.
+
+Mutual exclusion: `--all` and `--question` cannot both be set. Exactly one is required.
+
+Dedupe for `--all` looks only at pending proposed files (via `bootstrap_from.question_key`). Questions that were promoted to `pages/` and archived are NOT considered processed — if the user wants `--all` to skip already-promoted topics, they delete the corresponding line from `seed-questions.md` or run `--replace-pending` on a specific `--question` to regenerate. Manifest-aware "already promoted" tracking is a v0.2.2 consideration.
+
+**Exit codes for `wiki bootstrap prepare`** (now):
+- 0: prompt package emitted on stdout
+- 2: invalid question (unresolved without `--ad-hoc`, ambiguous substring, pending duplicate without `--replace-pending`, or `--all`+`--question` both passed)
+- 3: `--all` queue drained (no more unprocessed seed questions)
+- 1: other CLI/config error
+
 **Why start with hand-written pages instead of `bootstrap`:**
 - Forces a firsthand feel for the schema
 - Surfaces frontmatter friction before an LLM amplifies it

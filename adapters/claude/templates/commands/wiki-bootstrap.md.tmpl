@@ -10,7 +10,21 @@ Below, `WIKI` refers to that absolute invocation.
 
 Full protocol, rules, and examples live in the `wiki-bootstrap` skill (installed as a separate skill file). This slash command is the minimal invocation handle — the skill does the heavy lifting.
 
-Quick summary:
+## Two modes
+
+**Single-question mode** (default): user passes a specific question string.
+```
+WIKI bootstrap prepare <project> --question "..." [--ad-hoc] [--paths docs/technical/] [--limit-docs=5]
+```
+
+**--all loop mode**: iterate `queries/seed-questions.md` in file order, picking the next unprocessed question each invocation.
+```
+WIKI bootstrap prepare <project> --all [--max-proposals=3] [--paths docs/technical/] [--limit-docs=5]
+```
+
+Use `--all` when the user says "grow the wiki from the seed questions" or "bootstrap everything." Use single-question when they name a specific topic. The two flags are mutually exclusive.
+
+## Single-question steps
 
 1. Detect the project name from the current repo path.
 2. Resolve the user's question against `{{WIKI_DATA_ROOT}}/<project>/queries/seed-questions.md`. Exact or unambiguous substring match. If the user explicitly wants a question not in the seed file, include `--ad-hoc`. Never silently fall back.
@@ -19,9 +33,45 @@ Quick summary:
 5. Write the proposal to a tmpfile with `python3 -c 'import json; json.dump(...)'` (never heredoc), then run: `WIKI bootstrap submit <project> --proposal /tmp/wiki_bootstrap_proposal.json`
 6. On non-noop success, auto-chain: `WIKI promote <project> <staging_path> --apply`.
 
-Exit codes:
-- `0` proposal written (or promote succeeded)
-- `2` schema invalid, ambiguous question, missing provenance, or pending duplicate — show the stderr message and stop
-- `3` action=noop, nothing to promote
+## --all loop steps
 
-**Hard rules:** one question per invocation, always echo `bootstrap_question` provenance, never fabricate sources, never hand-edit pages/ or views/. Full guidance in the `wiki-bootstrap` skill.
+The CLI is stateless: each `prepare --all` invocation returns the next unprocessed question. Your job is to run the loop and track the session cap yourself.
+
+```
+submissions_this_session = 0
+loop:
+    r = WIKI bootstrap prepare <project> --all [--max-proposals=N] [--paths ...]
+    if r exit code == 3:
+        tell user "bootstrap queue empty — every seed question has been processed" and stop
+    if r exit code != 0:
+        show the stderr message and stop
+    pkg = json.loads(r.stdout)
+    # pkg["context"] has an "All-mode status" section telling you how many
+    # questions remain and what the session cap is. Read both — they are
+    # the source of truth.
+    synthesize proposal for the single question in pkg
+    write to tmpfile and WIKI bootstrap submit <project> --proposal <path>
+    if submit succeeded (exit 0) and action != "noop":
+        WIKI promote <project> <staging_path> --apply
+    submissions_this_session += 1
+    if submissions_this_session >= max_proposals (from pkg["context"] hint):
+        tell user "processed N questions in this session; pausing. Re-run
+        /wiki-bootstrap --all to continue." and stop
+    else:
+        continue loop
+```
+
+**Hard --all rules:**
+- ONE question per iteration. Never merge proposals.
+- Re-invoke `prepare --all` ONLY after the current question's submit (and, if applicable, promote) has finished. Never invoke it twice before submitting.
+- Respect the session cap from the prompt package. It exists so the user can review a batch of proposals before you generate more.
+- If a specific question in the loop hits an error, show it to the user and stop the loop. Do NOT skip to the next question silently.
+
+## Exit codes
+
+- `0` proposal written / prompt package emitted (single or --all mode)
+- `2` schema invalid, ambiguous question, missing provenance, or pending duplicate — show the stderr message and stop
+- `3` action=noop (on submit) OR --all queue empty (on prepare) — nothing to promote; in --all mode, the queue is drained and the user is done
+- `4` index unavailable — run `wiki index <project>` first
+
+**Hard rules:** always echo `bootstrap_question` provenance, never fabricate sources, never hand-edit pages/ or views/. Full guidance in the `wiki-bootstrap` skill.

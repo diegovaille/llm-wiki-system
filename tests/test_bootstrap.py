@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 from wiki_system.bootstrap import (
+    BootstrapAllExhausted,
     BootstrapRejection,
     _collect_source_candidates,
     _load_seed_questions,
+    _pick_next_all_mode_question,
     _score_source_doc,
     _slugify_question,
     resolve_question,
@@ -661,6 +663,284 @@ def test_cli_bootstrap_submit_writes_staged_file(wiki_root: Path, tmp_path: Path
     assert payload["action"] == "create"
     assert payload["proposed_page_id"] == "demo-pipeline"
     assert payload["question_key"] == "how-does-the-story-pipeline-work"
+
+
+# ---------- --all mode ----------
+
+
+def test_pick_next_all_mode_returns_first_unprocessed(
+    wiki_root: Path, tmp_path: Path
+):
+    """With three seed questions and none processed yet, --all picks the
+    first one and reports 3 remaining (including the returned one).
+    """
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+            "How is character identity enforced?",
+        ],
+    )
+    seeds = _load_seed_questions(wiki_root, "demo")
+    picked, remaining = _pick_next_all_mode_question(wiki_root, "demo", seeds)
+    assert picked.text == "How does the pipeline work?"
+    assert remaining == 3
+
+
+def test_pick_next_all_mode_skips_questions_with_pending_proposals(
+    wiki_root: Path, tmp_path: Path
+):
+    """If question 1 already has a pending proposal, --all picks question 2
+    and reports 2 remaining (the already-processed question is excluded).
+    """
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    # Submit a proposal for question 1 (establishes a pending proposal
+    # whose bootstrap_from.question_key matches)
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal=_valid_bootstrap_proposal(
+            bootstrap_question={
+                "question_text": "How does the pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-pipeline-work",
+                "question_line": 3,
+            }
+        ),
+    )
+
+    seeds = _load_seed_questions(wiki_root, "demo")
+    picked, remaining = _pick_next_all_mode_question(wiki_root, "demo", seeds)
+    assert picked.text == "What is the creation workflow?"
+    assert remaining == 1  # only this one remains
+
+
+def test_pick_next_all_mode_raises_when_queue_drained(
+    wiki_root: Path, tmp_path: Path
+):
+    """When every seed question has a pending proposal, --all raises
+    BootstrapAllExhausted (the CLI catches this and exits 3).
+    """
+    _write_seed_questions(
+        wiki_root, "demo", ["How does the pipeline work?"]
+    )
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal=_valid_bootstrap_proposal(
+            bootstrap_question={
+                "question_text": "How does the pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-pipeline-work",
+                "question_line": 3,
+            }
+        ),
+    )
+    seeds = _load_seed_questions(wiki_root, "demo")
+    with pytest.raises(BootstrapAllExhausted, match="already has"):
+        _pick_next_all_mode_question(wiki_root, "demo", seeds)
+
+
+def test_pick_next_all_mode_raises_when_no_seeds(
+    wiki_root: Path, tmp_path: Path
+):
+    """Empty (or missing) seed-questions.md raises BootstrapAllExhausted
+    so --all surfaces a clear message instead of silently doing nothing.
+    """
+    seeds = _load_seed_questions(wiki_root, "demo")  # file doesn't exist
+    with pytest.raises(BootstrapAllExhausted, match="no seed questions"):
+        _pick_next_all_mode_question(wiki_root, "demo", seeds)
+
+
+def test_run_prepare_all_mode_emits_package_with_remaining_count(
+    wiki_root: Path, tmp_path: Path
+):
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    project_cfg = _make_project(
+        tmp_path, files={"docs/a.md": "pipeline creation workflow"}
+    )
+    result = run_prepare_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        retrieval_cfg=RetrievalConfig(),
+        all_mode=True,
+        max_proposals=3,
+    )
+    assert result.question.text == "How does the pipeline work?"
+    assert result.remaining_questions == 2
+    assert result.max_proposals_hint == 3
+    # Context mentions --all status
+    assert "All-mode status" in result.package.context
+    assert "1 of 2" in result.package.context
+    assert "--max-proposals" in result.package.context
+    # Instructions mention the loop protocol
+    assert "--all loop protocol" in result.package.instructions
+
+
+def test_run_prepare_all_mode_and_question_mutually_exclusive(
+    wiki_root: Path, tmp_path: Path
+):
+    _write_seed_questions(wiki_root, "demo", ["any"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "any"})
+    with pytest.raises(BootstrapRejection, match="mutually exclusive"):
+        run_prepare_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            retrieval_cfg=RetrievalConfig(),
+            question_arg="any",
+            all_mode=True,
+        )
+
+
+def test_run_prepare_requires_question_or_all(
+    wiki_root: Path, tmp_path: Path
+):
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "x"})
+    with pytest.raises(BootstrapRejection, match="required"):
+        run_prepare_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            retrieval_cfg=RetrievalConfig(),
+        )
+
+
+def test_cli_bootstrap_prepare_all_returns_next_question(
+    wiki_root: Path, tmp_path: Path
+):
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "pipeline.md").write_text("pipeline creation workflow")
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    cfg_path = _setup_cli_config(tmp_path, wiki_root, repo, ["docs/**/*.md"])
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "prepare",
+            "demo",
+            "--all",
+            "--max-proposals",
+            "2",
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    pkg = json.loads(r.stdout)
+    assert pkg["allowed_actions"] == ["noop", "update", "create"]
+    assert "All-mode status" in pkg["context"]
+    assert "--max-proposals" in pkg["context"]
+    assert "1 of 2" in pkg["context"]
+    # Provenance block in context is for question 1
+    assert "How does the pipeline work?" in pkg["context"]
+
+
+def test_cli_bootstrap_prepare_all_exit_3_when_drained(
+    wiki_root: Path, tmp_path: Path
+):
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    _write_seed_questions(wiki_root, "demo", ["How does the pipeline work?"])
+    # Pre-populate a pending proposal for the only seed question
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal=_valid_bootstrap_proposal(
+            bootstrap_question={
+                "question_text": "How does the pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-pipeline-work",
+                "question_line": 3,
+            }
+        ),
+    )
+    cfg_path = _setup_cli_config(
+        tmp_path, wiki_root, tmp_path / "repo", ["docs/**/*.md"]
+    )
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        ["--config", str(cfg_path), "bootstrap", "prepare", "demo", "--all"],
+    )
+    assert r.exit_code == 3, (r.stdout, r.stderr)
+    assert "already" in r.stderr or "nothing" in r.stderr
+
+
+def test_cli_bootstrap_prepare_all_and_question_rejected(
+    wiki_root: Path, tmp_path: Path
+):
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    cfg_path = _setup_cli_config(
+        tmp_path, wiki_root, tmp_path / "repo", ["docs/**/*.md"]
+    )
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "prepare",
+            "demo",
+            "--all",
+            "--question",
+            "anything",
+        ],
+    )
+    assert r.exit_code == 1, (r.stdout, r.stderr)
+    assert "mutually exclusive" in r.stderr
+
+
+def test_cli_bootstrap_prepare_requires_question_or_all(
+    wiki_root: Path, tmp_path: Path
+):
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    cfg_path = _setup_cli_config(
+        tmp_path, wiki_root, tmp_path / "repo", ["docs/**/*.md"]
+    )
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        ["--config", str(cfg_path), "bootstrap", "prepare", "demo"],
+    )
+    assert r.exit_code == 1, (r.stdout, r.stderr)
+    assert "required" in r.stderr or "--question" in r.stderr
 
 
 def test_cli_bootstrap_submit_noop_exit_3(wiki_root: Path, tmp_path: Path):

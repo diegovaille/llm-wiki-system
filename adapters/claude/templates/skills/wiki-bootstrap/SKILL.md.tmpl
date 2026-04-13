@@ -106,10 +106,27 @@ Bootstrap uses the same prepare/submit shape as capture, but the commands are di
 - **Never run bootstrap autonomously mid-session.** Wait for the user to ask.
 - **Never edit files under `{{WIKI_DATA_ROOT}}/<project>/pages/` or `views/`.** All writes go through `WIKI promote`.
 
+## --all loop mode
+
+When the user wants to grow the wiki across every seed question (not a specific one), use `--all`. Each invocation returns exactly one question's prompt package — you process it fully (prepare → submit → promote), then re-invoke `prepare --all` to get the next. The CLI is stateless: it picks the first seed question that has no pending proposal.
+
+```bash
+# Iterate seed questions, cap at 3 submits per session
+WIKI bootstrap prepare myproject --all --max-proposals=3 [--paths docs/technical/]
+```
+
+Exit 3 means the queue is drained — every seed question already has a pending proposal (or was already promoted, via a separate pass).
+
+**--all loop discipline:**
+- `--max-proposals` is a session cap you (the agent) enforce by counting successful submits. Stop the loop when you hit it.
+- Questions remaining and the session cap are in the prompt package's `All-mode status` section — read both.
+- On an error mid-loop (submit rejects, promote fails, user says stop), surface the error and stop. Do not skip to the next question.
+- Do NOT invoke `prepare --all` twice before submitting the first result.
+
 ## Example invocations
 
 ```bash
-# Happy path — seed question match
+# Happy path — single seed question
 WIKI bootstrap prepare myproject --question "story pipeline"
 
 # Narrow source docs to a subtree
@@ -120,4 +137,7 @@ WIKI bootstrap prepare myproject --question "how does the rate limiter work" --a
 
 # Regenerate after rejecting a previous pending proposal
 WIKI bootstrap prepare myproject --question "story pipeline" --replace-pending
+
+# Loop over seed questions, 3 per session
+WIKI bootstrap prepare myproject --all --max-proposals=3
 ```
