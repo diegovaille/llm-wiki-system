@@ -1,6 +1,6 @@
 {
   "name": "wiki",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Personal wiki compiler: query, capture, review, promote compiled project knowledge.",
   "author": "Diego Vaillé (diegovaille)",
   "license": "MIT"

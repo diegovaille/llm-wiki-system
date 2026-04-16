@@ -8,7 +8,7 @@ dist/
 build/
 *.egg-info/
 .DS_Store
-uv.lock
+# uv.lock is committed for reproducible CLI installs (this is a tool, not a library).
 
 # Local dev permissions file is machine-specific; users start from
 # .claude/settings.local.example.json and adapt for their own layout.

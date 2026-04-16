@@ -66,12 +66,19 @@ class InitConfig:
 
 @dataclass
 class InitResult:
-    """What `wiki init` wrote. Used by the CLI to print a summary."""
+    """What `wiki init` wrote (or would write, in dry-run mode).
+
+    Used by the CLI to print a summary. When `dry_run` is True, the
+    `rendered` and `symlinks` fields still list the paths that WOULD
+    have been written so the caller can show a plan — but no files,
+    directories, or symlinks were actually created.
+    """
 
     rendered: list[Path] = field(default_factory=list)
     symlinks: list[tuple[Path, Path]] = field(default_factory=list)
     seeded_config: Path | None = None
     permissions_snippet: str = ""
+    dry_run: bool = False
 
 
 def render_template(template_text: str, substitutions: dict[str, str]) -> str:
@@ -102,7 +109,9 @@ def resolve_config(
     )
 
 
-def seed_wiki_config_if_missing(cfg: InitConfig) -> Path | None:
+def seed_wiki_config_if_missing(
+    cfg: InitConfig, *, dry_run: bool = False
+) -> Path | None:
     """Initialize the wiki data repo and seed wiki.config.toml if missing.
 
     On a fresh run:
@@ -119,6 +128,11 @@ def seed_wiki_config_if_missing(cfg: InitConfig) -> Path | None:
     Git is required. If `git init` fails (git not installed, permission
     denied, etc.) the exception propagates — callers treat it as an
     init failure.
+
+    When `dry_run=True`: no directories are created, `git init` is not
+    run, and the config file is not copied. The return value is the
+    path that WOULD have been seeded (so the caller can report it in
+    the plan), or None if a config already exists on disk.
     """
     if cfg.wiki_config_path.exists():
         return None
@@ -128,6 +142,8 @@ def seed_wiki_config_if_missing(cfg: InitConfig) -> Path | None:
             f"wiki.config.example.toml not found at {example}; "
             f"cannot seed a config for a fresh wiki data repo"
         )
+    if dry_run:
+        return cfg.wiki_config_path
     cfg.wiki_data_root.mkdir(parents=True, exist_ok=True)
     if not (cfg.wiki_data_root / ".git").exists():
         subprocess.run(
@@ -178,7 +194,9 @@ def render_adapter(cfg: InitConfig) -> dict[Path, str]:
     return out
 
 
-def write_adapter(rendered: dict[Path, str]) -> list[Path]:
+def write_adapter(
+    rendered: dict[Path, str], *, dry_run: bool = False
+) -> list[Path]:
     """Write rendered output to disk, overwriting existing files.
 
     Parent directories are created as needed. Existing destinations are
@@ -187,9 +205,16 @@ def write_adapter(rendered: dict[Path, str]) -> list[Path]:
 
     If a destination is currently a symlink, the symlink is removed first
     so we write a real file.
+
+    When `dry_run=True`: no directories, files, or symlinks are touched.
+    The function still returns the sorted list of destination paths that
+    WOULD have been written so the caller can report them.
     """
     written: list[Path] = []
     for dest, content in rendered.items():
+        if dry_run:
+            written.append(dest)
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.is_symlink() or dest.exists():
             dest.unlink()
@@ -199,7 +224,10 @@ def write_adapter(rendered: dict[Path, str]) -> list[Path]:
 
 
 def install_claude_symlinks(
-    cfg: InitConfig, rendered: dict[Path, str] | None = None
+    cfg: InitConfig,
+    rendered: dict[Path, str] | None = None,
+    *,
+    dry_run: bool = False,
 ) -> list[tuple[Path, Path]]:
     """Create Claude Code symlinks pointing at canonical agents_dir files.
 
@@ -216,15 +244,25 @@ def install_claude_symlinks(
     omitted, falls back to scanning `agents_dir/skills/` — less precise
     but keeps the function usable in isolation for tests.
 
-    Returns a list of `(symlink_path, target_path)` pairs that were
-    created. Existing symlinks, real files, or real directories at the
-    destinations are replaced.
+    Returns a list of `(symlink_path, target_path)` pairs that were (or
+    would be) created. Existing symlinks, real files, or real directories
+    at the destinations are replaced.
+
+    When `dry_run=True`: no symlinks, files, or directories are touched.
+    The function still enumerates every `(link, target)` pair that would
+    be created so the caller can report them. In dry-run mode, skill
+    discovery uses the rendered-set when available, or falls back to
+    inferring the standard two skills (wiki + wiki-bootstrap) from the
+    template tree under `wiki_system_root/adapters/claude/templates/`
+    when both `rendered` is None and `agents_dir/skills/` doesn't
+    exist yet.
     """
     links: list[tuple[Path, Path]] = []
 
     # Discover skill directories. Derive from the rendered set when we
     # have it, so we never accidentally symlink skills we didn't author.
     skill_dirs: set[Path] = set()
+    command_files: list[Path] = []
     if rendered is not None:
         for dest in rendered:
             try:
@@ -234,15 +272,28 @@ def install_claude_symlinks(
             parts = rel.parts
             if len(parts) >= 2 and parts[0] == "skills":
                 skill_dirs.add(cfg.agents_dir / "skills" / parts[1])
+            elif (
+                len(parts) >= 2
+                and parts[0] == "commands"
+                and parts[1].startswith("wiki-")
+                and parts[1].endswith(".md")
+            ):
+                command_files.append(cfg.agents_dir / "commands" / parts[1])
     else:
         skills_root = cfg.agents_dir / "skills"
         if skills_root.exists():
             skill_dirs.update(
                 p for p in skills_root.iterdir() if p.is_dir()
             )
+        commands_src = cfg.agents_dir / "commands"
+        if commands_src.exists():
+            command_files = sorted(commands_src.glob("wiki-*.md"))
 
     for skill_src in sorted(skill_dirs):
         skill_dest = cfg.claude_dir / "skills" / skill_src.name
+        if dry_run:
+            links.append((skill_dest, skill_src))
+            continue
         skill_dest.parent.mkdir(parents=True, exist_ok=True)
         if skill_dest.is_symlink() or skill_dest.exists():
             if skill_dest.is_dir() and not skill_dest.is_symlink():
@@ -253,16 +304,21 @@ def install_claude_symlinks(
         links.append((skill_dest, skill_src))
 
     # Commands (per-file symlinks; glob is broad enough to pick up new files)
-    commands_src = cfg.agents_dir / "commands"
-    commands_dest = cfg.claude_dir / "commands"
-    if commands_src.exists():
-        commands_dest.mkdir(parents=True, exist_ok=True)
-        for cmd_file in sorted(commands_src.glob("wiki-*.md")):
-            link = commands_dest / cmd_file.name
-            if link.is_symlink() or link.exists():
-                link.unlink()
-            os.symlink(cmd_file, link)
+    if dry_run:
+        for cmd_file in sorted(command_files):
+            link = cfg.claude_dir / "commands" / cmd_file.name
             links.append((link, cmd_file))
+    else:
+        commands_src = cfg.agents_dir / "commands"
+        commands_dest = cfg.claude_dir / "commands"
+        if commands_src.exists():
+            commands_dest.mkdir(parents=True, exist_ok=True)
+            for cmd_file in sorted(commands_src.glob("wiki-*.md")):
+                link = commands_dest / cmd_file.name
+                if link.is_symlink() or link.exists():
+                    link.unlink()
+                os.symlink(cmd_file, link)
+                links.append((link, cmd_file))
     return links
 
 
@@ -284,12 +340,20 @@ def run_init(
     wiki_data_root: Path,
     agents_dir: Path,
     claude_dir: Path,
+    dry_run: bool = False,
 ) -> InitResult:
     """End-to-end init: resolve, seed, render, write, symlink.
 
     Does NOT modify ~/.claude/settings.json — that's a user action. Instead
     we return a permissions snippet in the result so the caller can print
     it with instructions.
+
+    When `dry_run=True`: renders templates in memory but does not write
+    any files, create any directories, run `git init`, or install any
+    symlinks. The returned `InitResult` still has the same `rendered`
+    and `symlinks` lists so the caller can print a plan, and
+    `seeded_config` reports what WOULD have been seeded. Safe to run on
+    any machine to preview the full installation.
     """
     cfg = resolve_config(
         wiki_system_root=wiki_system_root,
@@ -297,13 +361,14 @@ def run_init(
         agents_dir=agents_dir,
         claude_dir=claude_dir,
     )
-    seeded = seed_wiki_config_if_missing(cfg)
+    seeded = seed_wiki_config_if_missing(cfg, dry_run=dry_run)
     rendered = render_adapter(cfg)
-    written = write_adapter(rendered)
-    symlinks = install_claude_symlinks(cfg, rendered)
+    written = write_adapter(rendered, dry_run=dry_run)
+    symlinks = install_claude_symlinks(cfg, rendered, dry_run=dry_run)
     return InitResult(
         rendered=written,
         symlinks=symlinks,
         seeded_config=seeded,
         permissions_snippet=build_permissions_snippet(cfg),
+        dry_run=dry_run,
     )

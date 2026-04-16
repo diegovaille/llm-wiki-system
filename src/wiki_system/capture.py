@@ -32,10 +32,16 @@ class PromptPackage:
     schema: str
     instructions: str
     allowed_actions: list[str] = field(default_factory=lambda: list(ALLOWED_ACTIONS))
+    summary: dict[str, Any] | None = None
 
     def to_json(self) -> str:
+        # `summary` is emitted FIRST so agents can `jq .summary` (or read
+        # the top of the file) to skim canonical_page_ids, source_doc_paths,
+        # question_key, and loop-status without parsing the 85+ KB context
+        # string. Issue #2 — prompt package size is awkward to read whole.
         return json.dumps(
             {
+                "summary": self.summary,
                 "system": self.system,
                 "context": self.context,
                 "schema": self.schema,

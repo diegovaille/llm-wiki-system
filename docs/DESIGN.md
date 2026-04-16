@@ -824,13 +824,54 @@ The `--max-proposals` flag is passed through as a hint in the prompt package's `
 
 Mutual exclusion: `--all` and `--question` cannot both be set. Exactly one is required.
 
-Dedupe for `--all` looks only at pending proposed files (via `bootstrap_from.question_key`). Questions that were promoted to `pages/` and archived are NOT considered processed — if the user wants `--all` to skip already-promoted topics, they delete the corresponding line from `seed-questions.md` or run `--replace-pending` on a specific `--question` to regenerate. Manifest-aware "already promoted" tracking is a v0.2.2 consideration.
+Dedupe for `--all` originally looked only at pending proposed files (via `bootstrap_from.question_key`). Questions that were promoted to `pages/` and archived are NOT considered processed — if the user wants `--all` to skip already-promoted topics, they delete the corresponding line from `seed-questions.md` or run `--replace-pending` on a specific `--question` to regenerate. Manifest-aware "already promoted" tracking remains a v0.2.3 consideration.
 
 **Exit codes for `wiki bootstrap prepare`** (now):
 - 0: prompt package emitted on stdout
-- 2: invalid question (unresolved without `--ad-hoc`, ambiguous substring, pending duplicate without `--replace-pending`, or `--all`+`--question` both passed)
+- 2: invalid question (unresolved without `--ad-hoc`, ambiguous substring, pending duplicate without `--replace-pending`, prior noop without `--replace-pending`, or `--all`+`--question` both passed)
 - 3: `--all` queue drained (no more unprocessed seed questions)
 - 1: other CLI/config error
+
+**v0.2.2 addendum — durable noop decisions, prompt-package summary, and `bootstrap resolve`:**
+
+v0.2.2 fixes four related bootstrap issues that surfaced from real use.
+
+**Issue 1 — `--all` + noop was an infinite loop.** The v0.2.1 picker (`_pick_next_all_mode_question`) considered a seed question "processed" only when a pending proposed staged file existed with matching `bootstrap_from.question_key`. But `submit` with `action: noop` wrote nothing — it short-circuited before `write_proposed_staged_file`. On a well-seeded wiki where most questions resolve to noop, `prepare --all` got stuck re-emitting the same question forever: noop → no staged file → picker re-emits → noop → …
+
+**Fix:** every noop decision now persists as a marker file at `<wiki_root>/<project>/staging/.bootstrap-noops/<question_key>.json`. The marker mirrors the `bootstrap_from` provenance plus an ISO-8601 timestamp and optional `reason` (the proposal's `rationale` field for submit-originated noops, the `--reason` flag for resolve-originated noops). `_pick_next_all_mode_question` now treats a question as "processed" if EITHER a pending proposal OR a noop marker exists. `--replace-pending` on prepare/submit clears both kinds of prior decisions.
+
+The marker directory lives inside `staging/` so it travels with the project. The dot-prefix keeps markers out of `list_staged` (which globs `*.md` at the top level only) and out of the `wiki review` queue — markers are skip signals, not reviewable artifacts. Delete the marker file to retry bootstrapping a noop'd question.
+
+**Issue 2 — prompt package was 85+ KB of JSON-escaped context on a single JSON-string line.** `wiki bootstrap prepare` output was hard to skim: the `context` field held one giant multi-line string, and agents had no way to decide "do I need the full evidence?" without parsing the whole package first.
+
+**Fix:** `PromptPackage` grew a `summary: dict[str, Any] | None` field, emitted FIRST in `to_json()`. Bootstrap prepare populates it with:
+
+```
+{
+  "question_key":            "...",
+  "question_text":           "...",
+  "question_source":         "seed" | "ad-hoc",
+  "canonical_page_ids":      [top-ranked existing pages],
+  "source_doc_paths":        [top-ranked repo source docs],
+  "existing_pending_path":   null | "<path>",
+  "remaining_questions":     null | int,
+  "max_proposals_hint":      null | int
+}
+```
+
+Agents read `summary` first to decide whether noop is obvious (e.g. `canonical_page_ids` contains an obvious match; `source_doc_paths` is empty so evidence is weak), and only drill into `context` when real synthesis is required. The field is optional and free-form so capture-side packages can populate it independently as needed.
+
+**Issue 3 — the `--all` loop doc tension.** v0.2.1 said "bias hard toward noop" but `--all` structurally penalized noops: a noop didn't advance the loop. Guidance and behavior contradicted. The v0.2.2 marker fix aligns them — noop is a first-class decision that progresses the loop, not a stall. Bootstrap skill and slash command templates updated to reflect this.
+
+**Issue 4 — seed questions never got removed from `seed-questions.md` and noop decisions didn't persist.** Even after a full session where the agent decided noop on Q1/Q2/Q3, re-running `bootstrap --all` tomorrow would redo the same analysis. Beyond the `--all` loop bug, the user wanted a way to durably record "this question doesn't need bootstrapping" without going through the full prepare → synthesize → submit cycle.
+
+**Fix:** new command `wiki bootstrap resolve <project> --question "..." --as noop [--reason "..."] [--ad-hoc] [--replace-existing]`. Writes the same noop marker shape as submit-originated noops, except `resolved_by` records `wiki bootstrap resolve` vs `wiki bootstrap`. Rejects if a pending bootstrap proposal exists for the question (the user should review/promote/delete it first rather than resolving in parallel). `--as` currently accepts only `noop`; additional resolution types may be added in later releases.
+
+**Non-goals for v0.2.2:**
+
+- **No `--unresolve` flag.** To retry a noop'd question, delete the marker file manually or pass `--replace-pending` to prepare/submit — both work. A dedicated "un-noop" flag is adds more surface area than it earns.
+- **No GC / housekeeping for stale markers.** Markers live forever by default. They're small (a few hundred bytes each) and serve as an audit trail.
+- **No manifest-aware "already promoted" dedupe.** Still deferred to v0.2.3. A question whose page was promoted and whose staged file was archived still re-emits from `--all` unless the user (a) deletes the seed line, (b) runs `bootstrap resolve --as noop`, or (c) lets prepare emit it and submits noop (which then persists).
 
 **Why start with hand-written pages instead of `bootstrap`:**
 - Forces a firsthand feel for the schema

@@ -45,6 +45,12 @@ Two repos, three layers:
 - **~/Git/wiki/** is your data repo. A separate git repo that holds pages, staging, and views for every project you wiki-enable. `wiki init` is what creates it on first run: it makes the directory if missing, runs `git init` to turn it into a repo, and seeds `wiki.config.toml` from `wiki.config.example.toml`. **Heads up:** this means `wiki init` mutates `~/Git/wiki/` (or whatever `--wiki-data-root` points at) into a git repo. If that directory already exists and is already a git repo, `wiki init` leaves it alone; it only initializes when there's no `.git` yet. Subsequent `wiki init` runs are idempotent and never re-initialize the repo or overwrite an existing `wiki.config.toml`.
 - **Canonical pages** never get edited directly. Every change goes through staging and `wiki promote` — which gives you a diff, a dry-run, an audit trail in `sources/manifest.jsonl`, and a single-writer invariant that prevents hand-edits from silently corrupting the index.
 
+## Platform support
+
+- **macOS and Linux** are first-class. CI runs on Ubuntu with Python 3.11 and 3.12.
+- **Windows**: use [WSL](https://learn.microsoft.com/en-us/windows/wsl/). `wiki init` uses `os.symlink` to wire `~/.claude/skills/wiki` → `~/.agents/skills/wiki`, which requires Developer Mode or admin on native Windows. WSL avoids that entirely.
+- **Prerequisites**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/) for environment management, and `git` on PATH (`wiki init` runs `git init --quiet` on the wiki data root on first setup).
+
 ## Quickstart
 
 ```bash
@@ -53,33 +59,38 @@ git clone <this repo> ~/Git/wiki-system
 cd ~/Git/wiki-system
 uv venv && uv sync
 
-# 2. Initialize:
+# 2. Preview what `wiki init` will do (optional but recommended)
+.venv/bin/wiki --no-json init --dry-run
+
+# 3. Initialize:
 #    - creates ~/Git/wiki/ (your wiki data repo) and runs `git init` in it
 #    - seeds wiki.config.toml from wiki.config.example.toml
 #    - renders adapter templates into ~/.agents/ and symlinks them from ~/.claude/
 #    - prints a permissions JSON snippet for ~/.claude/settings.json
 .venv/bin/wiki --no-json init
 
-# 3. Edit the seeded config to register your projects
+# 4. Edit the seeded config to register your projects
 $EDITOR ~/Git/wiki/wiki.config.toml
 
-# 4. Add the printed permissions snippet to ~/.claude/settings.json
+# 5. Add the printed permissions snippet to ~/.claude/settings.json
 $EDITOR ~/.claude/settings.json
 
-# 5. Restart Claude Code. /wiki-query, /wiki-capture, etc. now work.
+# 6. Restart Claude Code. /wiki-query, /wiki-capture, etc. now work.
 ```
 
 See [`adapters/claude/install/install.md`](adapters/claude/install/install.md) for the full install guide including troubleshooting and uninstall.
 
-## The six operations
+## Core operations
 
 | Command | What it does | When to use |
 |---|---|---|
 | `wiki query <project> "<q>"` | Lexical + link-graph ranked retrieval. No embeddings, no guesses. | Answer a question before falling back to `docs/`. |
 | `wiki index <project>` | Rebuild the JSON retrieval index + regenerate `views/index.md`, `views/by-type.md`, `views/by-domain.md`. | After hand-editing config or pulling new pages. |
 | `wiki capture prepare` / `submit` | Two-step protocol: prepare emits a prompt package, submit validates a structured proposal and writes a `state: proposed` staged file. | Session-origin captures (via `/wiki-capture`) and upgrading raw staged files. |
+| `wiki sync <project>` | Register project docs matching `source_globs` as `state: raw` staged files for later distillation through the capture loop. Scoped by `--path` subtree; `--force` re-stages. | Doc-led wiki growth: "compile these existing markdown files into pages." |
+| `wiki bootstrap prepare` / `submit` / `resolve` | Question-led wiki growth from `queries/seed-questions.md`. `prepare` builds a prompt package (single-question or `--all` loop); `submit` validates a proposal and writes either a staged file or a durable noop marker; `resolve --as noop` is a shortcut for known-noop questions. | Distill answers for specific questions; grow a wiki from a seed-question list. |
 | `wiki promote <project> <path>` | The ONLY path from staging to `pages/`. Dry-run first (diff on stderr), `--apply` to write. | After `/wiki-capture` or reviewing staging by hand. |
-| `wiki review <project>` | Deterministic JSON listing of the staging queue (raw first, then proposed, sorted by `created_at`). | `/wiki-review` in Claude Code. |
+| `wiki review <project>` | Deterministic JSON listing of the staging queue (raw first, then proposed, sorted by `created_at`). Excludes noop markers. | `/wiki-review` in Claude Code. |
 | `wiki init` | Generate per-machine adapter artifacts (skill + slash commands + permissions snippet). | First install, and after `git pull` on this repo. |
 
 ## Page schema, briefly
@@ -127,7 +138,7 @@ The result is a deterministic ranked list with reasons and snippets — the scor
 ```bash
 cd ~/Git/wiki-system
 uv sync
-.venv/bin/pytest              # 109 portable tests, runs in ~0.3s
+.venv/bin/pytest              # 224 portable tests, runs in ~0.6s
 .venv/bin/pytest -m integration   # 1 integration test against live wiki data (skipped if unset)
 ```
 
@@ -146,29 +157,30 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 `.claude/settings.local.json` is gitignored.
 
-## Current surface (v0.2.0)
+## Current surface (v0.2.2)
 
 **CLI commands shipped and tested:**
 
 - `wiki init` — seed `wiki.config.toml` and `git init` the data repo; render the Claude adapter templates with your machine-specific paths and symlink them into `~/.agents/` (canonical) + `~/.claude/` (symlinks). Idempotent.
-- `wiki query <project> "<q>"` — lexical + link-graph retrieval
+- `wiki query <project> "<q>"` — lexical + link-graph retrieval. Exit 4 if the index is unavailable (distinct from exit 2 "no results"), so machine callers can tell "wiki has nothing on this topic" apart from "wiki isn't queryable."
 - `wiki index <project>` — rebuild the retrieval index + regenerate views
 - `wiki capture prepare|submit` — session-origin and staged-upgrade capture
 - `wiki promote <project> <staging-path>` — dry-run or `--apply` a proposed staged file
 - `wiki review <project>` — deterministic listing of the staging queue
-- `wiki sync <project> [--path <subtree>] [--force]` — register project docs matching `source_globs` as `state: raw` staged files. Manual / operator-driven in v0.1.1; hook-driven triggers remain deferred.
-- `wiki bootstrap prepare|submit <project> --question "..." [--ad-hoc]` — single-question mode for seed-question-driven page synthesis. v0.2.0 slice; `--all` loop mode and `--max-proposals` deferred.
+- `wiki sync <project> [--path <subtree>] [--force]` — register project docs matching `source_globs` as `state: raw` staged files. Manual / operator-driven; hook-driven triggers remain deferred. Dedupes against both raw staged files and proposed files upgraded from them (so `sync → capture → sync` cannot produce duplicates).
+- `wiki bootstrap prepare|submit <project>` — seed-question-driven page synthesis. Supports both single-question mode (`--question "..."`) and a stateless `--all` loop (`--all --max-proposals=N`) that walks `queries/seed-questions.md` and emits one unprocessed question per invocation. The prompt package includes a skim-friendly `summary` field so agents can decide noop upfront without parsing the full context. Noop decisions persist as markers under `staging/.bootstrap-noops/` so `--all` advances past them correctly (fix for the pre-v0.2.2 infinite-loop bug on well-seeded wikis).
+- `wiki bootstrap resolve <project> --question "..." --as noop [--reason "..."]` — shortcut to durably record a noop decision without running the full prepare/synthesize/submit cycle. Useful when the user already knows a seed question doesn't need bootstrapping.
 
 **Claude adapter surface:**
 
 - One main `wiki` skill + one pluggable `wiki-bootstrap` sub-skill (installed as separate files under `~/.agents/skills/`, symlinked into `~/.claude/skills/`)
-- Six slash commands: `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`, `/wiki-sync`, `/wiki-bootstrap`
+- Six slash commands: `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`, `/wiki-sync`, `/wiki-bootstrap` (the last covers `bootstrap prepare`, `submit`, and `resolve`)
 - All templates render the binary as an absolute path — no PATH inheritance required
 - Execution is agent-mode only (prepare/submit protocol drives Claude Code; direct-API mode is v0.2+)
 
 **Still deferred:**
 
-- `wiki bootstrap --all` loop mode with `--max-proposals` (v0.2.1)
+- Manifest-aware "already promoted" dedupe for `--all` (questions whose pages were promoted and archived still re-emit unless the user deletes the seed line or runs `bootstrap resolve --as noop`) (v0.2.3)
 - Hook-driven `wiki sync` (post-spec, post-commit triggers) (v0.2)
 - `wiki blame`, `wiki export-site` (v0.2.x)
 - `wiki doctor` / `wiki status` health check command (v0.2.x)

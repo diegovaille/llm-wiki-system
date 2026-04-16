@@ -5,7 +5,7 @@ description: Use when the user wants to distill a seed question (or ad-hoc quest
 
 # Wiki bootstrap skill
 
-This is the pluggable bootstrap sub-skill of the wiki plugin. The core `wiki` skill describes the shared schema, permissions, and operations; this skill covers the bootstrap-specific prepare/submit protocol.
+This is the pluggable bootstrap sub-skill of the wiki plugin. The core `wiki` skill describes the shared schema, permissions, and operations; this skill covers the bootstrap-specific prepare/submit/resolve protocol.
 
 `wiki bootstrap` is the complement to `wiki sync`:
 
@@ -13,6 +13,23 @@ This is the pluggable bootstrap sub-skill of the wiki plugin. The core `wiki` sk
 - **bootstrap** starts from *seed questions* and synthesizes exactly one canonical page per question using the best evidence available from the wiki and the repo
 
 Both write `state: proposed` staged files that go through the same `wiki promote` flow. Bootstrap-originated staged files carry a `bootstrap_from` block recording which question drove them, so the audit trail is explicit.
+
+## Three subcommands
+
+- `WIKI bootstrap prepare` — build a prompt package for one seed question (single or `--all` mode)
+- `WIKI bootstrap submit` — validate a proposal and write a `state: proposed` staged file (for `action: create | update`) OR a durable noop marker (for `action: noop`)
+- `WIKI bootstrap resolve` — short-circuit: record a noop decision without running prepare/synthesize/submit. Useful when the user already knows a seed question is out of scope.
+
+## Noop decisions are durable (v0.2.2)
+
+Every bootstrap decision — `create`, `update`, AND `noop` — persists state so `--all` mode can advance past it.
+
+- `create` / `update` writes a `state: proposed` staged file under `staging/` (visible in `wiki review`)
+- `noop` writes a marker under `staging/.bootstrap-noops/<question_key>.json` (invisible to `wiki review`; consumed only by `--all` mode)
+
+Before v0.2.2, noop left no trace, so `--all` on a well-seeded wiki got stuck re-emitting the same question forever. Now it advances correctly.
+
+**To retry a noop'd question** (e.g. because new evidence emerged): either delete the marker file under `staging/.bootstrap-noops/` manually, or pass `--replace-pending` to `bootstrap prepare`/`submit` (the flag covers both pending-proposal and noop-marker prior decisions).
 
 ## Binary (absolute path — NOT on PATH)
 
@@ -39,10 +56,11 @@ Below, `WIKI` refers to that absolute invocation.
 
 Bootstrap uses the same prepare/submit shape as capture, but the commands are distinct because the provenance and lifecycle are distinct:
 
-1. `WIKI bootstrap prepare <project> --question "..."` — emits a prompt package JSON with project intent, the resolved seed question, top existing canonical pages, and top source doc candidates scored by token overlap
-2. You (Claude) read the package, synthesize ONE proposal that answers the question
-3. `WIKI bootstrap submit <project> --proposal <path>` — validates the proposal (including the required `bootstrap_question` provenance block) and writes a `state: proposed + origin: bootstrap` staged file
-4. `WIKI promote <project> <staging-path> --apply` — canonicalizes
+1. `WIKI bootstrap prepare <project> --question "..."` — emits a prompt package JSON with a top-level `summary` field (question_key, canonical_page_ids, source_doc_paths, remaining/cap for --all), project intent, the resolved seed question, top existing canonical pages, and top source doc candidates scored by token overlap
+2. You (Claude) read the `summary` first to decide if noop is obviously correct. If the existing pages clearly answer the question, go to step 5 with `action: noop`. Otherwise read the full `context` string and synthesize ONE proposal.
+3. `WIKI bootstrap submit <project> --proposal <path>` — validates the proposal (including the required `bootstrap_question` provenance block) and writes either a `state: proposed + origin: bootstrap` staged file (create/update) or a noop marker (noop)
+4. `WIKI promote <project> <staging-path> --apply` — canonicalizes (create/update only; skipped for noop)
+5. For noop shortcut when you haven't read the full context yet: `WIKI bootstrap resolve <project> --question "..." --as noop --reason "..."`
 
 ## Steps
 
@@ -56,7 +74,14 @@ Bootstrap uses the same prepare/submit shape as capture, but the commands are di
    ```
    Default `--limit-docs` is 5. Use `--paths` to narrow source doc candidates to a repo subtree when the user has a specific area in mind. If a pending bootstrap proposal already exists for this question, the command fails with `BootstrapRejection` — tell the user and suggest either `/wiki-review` to look at the pending one, or `--replace-pending` if they want to regenerate.
 
-4. **Read the prompt package.** It will have `system`, `context`, `schema`, `instructions`, `allowed_actions` fields. The `context` includes:
+4. **Read the prompt package.** It has `summary`, `system`, `context`, `schema`, `instructions`, `allowed_actions` fields. **Read `summary` first** — it's a skim-friendly dict with:
+   - `question_key`, `question_text`, `question_source`
+   - `canonical_page_ids` (top-ranked existing pages — if one obviously answers the question, lean toward noop/update)
+   - `source_doc_paths` (top-ranked source docs — if the list is empty, evidence is weak, lean toward noop)
+   - `existing_pending_path` (if non-null, this question had a prior decision — usually prepare already refused, but check)
+   - `remaining_questions`, `max_proposals_hint` (in --all mode, for loop discipline)
+
+   After skimming `summary`, read `context` for the full evidence. It includes:
    - Project intent (`meta/project.md` body)
    - The resolved seed question + provenance block
    - Top-ranked existing canonical pages (read their bodies — this is where you decide noop/update)
@@ -88,8 +113,8 @@ Bootstrap uses the same prepare/submit shape as capture, but the commands are di
    WIKI bootstrap submit <project> --proposal /tmp/wiki_bootstrap_proposal.json
    ```
    - Exit 0: staged file was written. Extract `staging_path` from JSON output.
-   - Exit 3: `action: noop` — nothing was staged.
-   - Exit 2: schema invalid, or `bootstrap_question` missing, or a pending proposal already exists for this question. Show the error and stop.
+   - Exit 3: `action: noop` — a durable noop marker was written under `staging/.bootstrap-noops/<question_key>.json` so `--all` mode will skip this question on future passes. `staging_path` in the JSON output points at the marker file. Nothing to promote.
+   - Exit 2: schema invalid, or `bootstrap_question` missing, or a pending proposal or prior noop marker already exists for this question (without `--replace-pending`). Show the error and stop.
 
 7. **Auto-chain promote** on non-noop:
    ```bash
@@ -99,29 +124,57 @@ Bootstrap uses the same prepare/submit shape as capture, but the commands are di
 
 ## Hard rules
 
-- **One question per invocation.** Do not batch multiple seed questions in a single proposal. `--all` mode is v0.2.1, not now.
+- **One question per invocation.** Do not batch multiple seed questions in a single proposal.
 - **Always include `bootstrap_question` provenance** in the proposal. Submit rejects proposals without it.
 - **Never hallucinate sources.** Only cite source docs you actually read from the prompt package.
-- **Bias toward update over create, and noop over both.** Same under-capture ethos as regular capture.
+- **Bias toward update over create, and noop over both.** Same under-capture ethos as regular capture. Noop is durable now — it doesn't stall the `--all` loop.
 - **Never run bootstrap autonomously mid-session.** Wait for the user to ask.
 - **Never edit files under `{{WIKI_DATA_ROOT}}/<project>/pages/` or `views/`.** All writes go through `WIKI promote`.
+- **Read `summary` before `context`.** The context string can be 85+ KB on a richly-seeded wiki; the summary lets you decide upfront whether you need the full evidence.
 
 ## --all loop mode
 
-When the user wants to grow the wiki across every seed question (not a specific one), use `--all`. Each invocation returns exactly one question's prompt package — you process it fully (prepare → submit → promote), then re-invoke `prepare --all` to get the next. The CLI is stateless: it picks the first seed question that has no pending proposal.
+When the user wants to grow the wiki across every seed question (not a specific one), use `--all`. Each invocation returns exactly one question's prompt package — you process it fully (prepare → submit → promote), then re-invoke `prepare --all` to get the next. The CLI is stateless: it picks the first seed question that has no prior bootstrap decision (neither a pending proposal nor a persisted noop marker).
 
 ```bash
 # Iterate seed questions, cap at 3 submits per session
 WIKI bootstrap prepare myproject --all --max-proposals=3 [--paths docs/technical/]
 ```
 
-Exit 3 means the queue is drained — every seed question already has a pending proposal (or was already promoted, via a separate pass).
+Exit 3 means the queue is drained — every seed question already has a prior decision (pending proposal or persisted noop marker) or was already promoted and the seed line was manually removed.
+
+**Noop advances the loop.** Every `action: noop` submit in `--all` mode writes a marker under `staging/.bootstrap-noops/<question_key>.json`, which the picker treats as "already considered." This means `--all` on a well-seeded wiki works correctly: `noop → re-invoke prepare --all → next question`. (Prior to v0.2.2, noop left no trace and `--all` got stuck re-emitting the same question.)
+
+**Bias guidance stays the same.** Still bias hard toward `noop` when existing pages already answer the question. Noop is not a loop-stall — it's a durable decision that the question is adequately covered or lacks evidence. The loop advances either way.
 
 **--all loop discipline:**
-- `--max-proposals` is a session cap you (the agent) enforce by counting successful submits. Stop the loop when you hit it.
-- Questions remaining and the session cap are in the prompt package's `All-mode status` section — read both.
+- `--max-proposals` is a session cap you (the agent) enforce by counting successful submits (including noops — they're still "processed" seed questions). Stop the loop when you hit it.
+- Questions remaining and the session cap are in the prompt package's `summary` field AND its `All-mode status` context section — either is the source of truth.
 - On an error mid-loop (submit rejects, promote fails, user says stop), surface the error and stop. Do not skip to the next question.
 - Do NOT invoke `prepare --all` twice before submitting the first result.
+- If `--all` exits 3 immediately and the user expected work, check `staging/.bootstrap-noops/` — a noop'd question is not re-emitted. To force a retry, delete the marker or use `--replace-pending` on `--question "..."`.
+
+## Resolve — short-circuit for known-noop questions
+
+When the user already knows a seed question doesn't need a bootstrap page (out of scope, covered by another canonical page, trivially answered, no longer relevant), use `WIKI bootstrap resolve` instead of running the full prepare/synthesize/submit cycle for a noop:
+
+```bash
+WIKI bootstrap resolve myproject --question "story pipeline" --as noop --reason "already covered by the main architecture page"
+```
+
+- `--as noop` is required (only supported resolution in v0.2.2)
+- `--reason` is optional but strongly recommended for the audit trail
+- `--ad-hoc` for free-text questions not in seed-questions.md
+- `--replace-existing` to overwrite an existing noop marker
+
+The resulting marker is indistinguishable from a submit-originated noop (both live at `staging/.bootstrap-noops/<question_key>.json`, both cause `--all` to skip the question) except that the `resolved_by` field records `wiki bootstrap resolve` vs `wiki bootstrap`.
+
+**When to use resolve vs submit (noop):**
+
+- **submit with `action: noop`**: you ran `prepare`, read the prompt package, and concluded noop based on the evidence. Agent-driven decision with full context.
+- **resolve `--as noop`**: the user explicitly says "this question doesn't need bootstrapping" before you run prepare. Shortcut that skips context-building entirely.
+
+Resolve rejects if there's already a pending bootstrap proposal for the question — review/promote/delete the pending item first, don't double-resolve.
 
 ## Example invocations
 
@@ -135,9 +188,12 @@ WIKI bootstrap prepare myproject --question "authentication flow" --paths docs/s
 # Ad-hoc deep-dive not in seed-questions.md
 WIKI bootstrap prepare myproject --question "how does the rate limiter work" --ad-hoc
 
-# Regenerate after rejecting a previous pending proposal
+# Regenerate after rejecting a previous pending proposal or prior noop
 WIKI bootstrap prepare myproject --question "story pipeline" --replace-pending
 
-# Loop over seed questions, 3 per session
+# Loop over seed questions, 3 per session (noops now advance the loop)
 WIKI bootstrap prepare myproject --all --max-proposals=3
+
+# Short-circuit a known-noop question without running prepare/submit
+WIKI bootstrap resolve myproject --question "X" --as noop --reason "out of scope"
 ```

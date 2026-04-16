@@ -45,7 +45,7 @@ Do NOT capture routine implementation, obvious bug fixes, small refactors, or tr
 4. `WIKI promote` — the only path from staging to pages
 5. `WIKI review` (via `/wiki-review`) — list pending staged items
 6. `WIKI sync` (via `/wiki-sync`) — register project docs as `state: raw` staged files for later distillation via `/wiki-capture --from-staged=<path>`
-7. `WIKI bootstrap prepare` / `WIKI bootstrap submit` (via `/wiki-bootstrap`) — answer a seed question with exactly one canonical page, synthesized from existing pages + top source docs. The full protocol lives in the **`wiki-bootstrap` sub-skill** — a separate pluggable skill that you should consult when the user wants question-led wiki growth.
+7. `WIKI bootstrap prepare` / `WIKI bootstrap submit` / `WIKI bootstrap resolve` (via `/wiki-bootstrap`) — answer a seed question with exactly one canonical page, synthesized from existing pages + top source docs, OR record a durable noop decision for a question that doesn't need bootstrapping. The full protocol lives in the **`wiki-bootstrap` sub-skill** — a separate pluggable skill that you should consult when the user wants question-led wiki growth.
 
 ## Two ways content enters the wiki
 

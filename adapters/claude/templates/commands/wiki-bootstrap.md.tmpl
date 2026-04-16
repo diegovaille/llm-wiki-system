@@ -10,7 +10,7 @@ Below, `WIKI` refers to that absolute invocation.
 
 Full protocol, rules, and examples live in the `wiki-bootstrap` skill (installed as a separate skill file). This slash command is the minimal invocation handle — the skill does the heavy lifting.
 
-## Two modes
+## Three modes
 
 **Single-question mode** (default): user passes a specific question string.
 ```
@@ -22,7 +22,12 @@ WIKI bootstrap prepare <project> --question "..." [--ad-hoc] [--paths docs/techn
 WIKI bootstrap prepare <project> --all [--max-proposals=3] [--paths docs/technical/] [--limit-docs=5]
 ```
 
-Use `--all` when the user says "grow the wiki from the seed questions" or "bootstrap everything." Use single-question when they name a specific topic. The two flags are mutually exclusive.
+**Resolve mode**: durably record a noop decision without running prepare/submit. Short-circuit for questions the user already knows are out of scope.
+```
+WIKI bootstrap resolve <project> --question "..." --as noop --reason "..." [--ad-hoc]
+```
+
+Use `--all` when the user says "grow the wiki from the seed questions" or "bootstrap everything." Use single-question when they name a specific topic. Use `resolve` when the user says "that question doesn't need a page — skip it." The `--all` and `--question` flags are mutually exclusive.
 
 ## Single-question steps
 
@@ -35,7 +40,7 @@ Use `--all` when the user says "grow the wiki from the seed questions" or "boots
 
 ## --all loop steps
 
-The CLI is stateless: each `prepare --all` invocation returns the next unprocessed question. Your job is to run the loop and track the session cap yourself.
+The CLI is stateless: each `prepare --all` invocation returns the next unprocessed question (no pending proposal AND no noop marker). Your job is to run the loop and track the session cap yourself.
 
 ```
 submissions_this_session = 0
@@ -46,32 +51,55 @@ loop:
     if r exit code != 0:
         show the stderr message and stop
     pkg = json.loads(r.stdout)
-    # pkg["context"] has an "All-mode status" section telling you how many
-    # questions remain and what the session cap is. Read both — they are
-    # the source of truth.
-    synthesize proposal for the single question in pkg
+    # pkg["summary"] gives you question_key, canonical_page_ids,
+    # source_doc_paths, remaining_questions, max_proposals_hint without
+    # parsing the full context. Read it first. The "All-mode status"
+    # section in pkg["context"] is the human-readable mirror.
+    synthesize proposal for the single question in pkg (noop is a valid
+    outcome — it writes a durable marker that advances the --all loop
+    to the next question on the next iteration)
     write to tmpfile and WIKI bootstrap submit <project> --proposal <path>
     if submit succeeded (exit 0) and action != "noop":
         WIKI promote <project> <staging_path> --apply
     submissions_this_session += 1
-    if submissions_this_session >= max_proposals (from pkg["context"] hint):
+    if submissions_this_session >= max_proposals (from pkg["summary"]["max_proposals_hint"]):
         tell user "processed N questions in this session; pausing. Re-run
         /wiki-bootstrap --all to continue." and stop
     else:
         continue loop
 ```
 
+**Noop advances the loop** (v0.2.2). Submitting `action: noop` writes a marker under `staging/.bootstrap-noops/<question_key>.json` that the next `prepare --all` treats as "already processed." So on a well-seeded wiki where most questions are adequately answered, `--all` progresses through the list via noops rather than getting stuck on question 1 forever (the old bug).
+
 **Hard --all rules:**
 - ONE question per iteration. Never merge proposals.
 - Re-invoke `prepare --all` ONLY after the current question's submit (and, if applicable, promote) has finished. Never invoke it twice before submitting.
-- Respect the session cap from the prompt package. It exists so the user can review a batch of proposals before you generate more.
+- Respect the session cap from the prompt package summary. It exists so the user can review a batch of proposals before you generate more.
+- Count noops toward the session cap — they're still "processed" seed questions and deserve user review.
 - If a specific question in the loop hits an error, show it to the user and stop the loop. Do NOT skip to the next question silently.
+- If `--all` exits 3 immediately and the user expected work, check `staging/.bootstrap-noops/` — a previously-noop'd question is not re-emitted. Delete the marker or use `resolve`/`--replace-pending` to retry.
+
+## Resolve steps (shortcut for known-noop questions)
+
+When the user explicitly says "this question doesn't need a page" or "skip this one" — without wanting you to run the full synthesis cycle — use `resolve`:
+
+```bash
+WIKI bootstrap resolve <project> --question "..." --as noop --reason "..." [--ad-hoc]
+```
+
+This writes a noop marker at `{{WIKI_DATA_ROOT}}/<project>/staging/.bootstrap-noops/<question_key>.json` and exits 0. Future `--all` invocations will skip the question. Use this when:
+
+- User says "that question is out of scope for this project"
+- User says "we answer that via X page already"
+- User wants to clear the --all queue of a seed question they no longer care about
+
+Do NOT use `resolve` when you've already run `prepare` and have enough context to submit a real noop — use `submit` with `action: noop` in that case so the audit trail reflects the agent-driven decision.
 
 ## Exit codes
 
-- `0` proposal written / prompt package emitted (single or --all mode)
-- `2` schema invalid, ambiguous question, missing provenance, or pending duplicate — show the stderr message and stop
-- `3` action=noop (on submit) OR --all queue empty (on prepare) — nothing to promote; in --all mode, the queue is drained and the user is done
+- `0` proposal written / prompt package emitted / resolve succeeded
+- `2` schema invalid, ambiguous question, missing provenance, pending duplicate, prior noop without `--replace-pending`, or other domain rejection — show the stderr message and stop
+- `3` action=noop (on submit, marker written) OR --all queue empty (on prepare) — nothing to promote; in --all mode, check `staging/.bootstrap-noops/` if you expected work to remain
 - `4` index unavailable — run `wiki index <project>` first
 
-**Hard rules:** always echo `bootstrap_question` provenance, never fabricate sources, never hand-edit pages/ or views/. Full guidance in the `wiki-bootstrap` skill.
+**Hard rules:** always echo `bootstrap_question` provenance, never fabricate sources, never hand-edit pages/ or views/, read `summary` before `context`. Full guidance in the `wiki-bootstrap` skill.

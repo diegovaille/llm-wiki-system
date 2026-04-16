@@ -365,3 +365,146 @@ def test_cli_init_text_mode_shows_both_tiers(tmp_path: Path):
     assert "symlink" in r.stdout
     assert "permissions" in r.stdout
     assert "Read(" in r.stdout
+
+
+# ---------- --dry-run mode ----------
+
+
+def test_run_init_dry_run_writes_no_files(tmp_path: Path):
+    """`wiki init --dry-run` plans the full install without touching disk.
+
+    The returned InitResult carries the paths that WOULD have been
+    written / symlinked so the caller can print a plan, but no file,
+    directory, or symlink is created under agents_dir, claude_dir, or
+    wiki_data_root. The wiki data repo is NOT git-init'd and
+    wiki.config.toml is NOT seeded.
+    """
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    result = run_init(
+        wiki_system_root=fake_ws,
+        wiki_data_root=wiki_data,
+        agents_dir=agents_dir,
+        claude_dir=claude_dir,
+        dry_run=True,
+    )
+    # Result shape is identical to a real run — same counts, same paths
+    assert result.dry_run is True
+    assert len(result.rendered) == 9
+    assert len(result.symlinks) == 8
+    assert result.seeded_config is not None  # would have been seeded
+    assert result.permissions_snippet  # still computed
+
+    # Nothing actually on disk
+    assert not wiki_data.exists(), (
+        "dry-run must not create the wiki data root"
+    )
+    assert not agents_dir.exists(), (
+        "dry-run must not create the canonical agents directory"
+    )
+    assert not claude_dir.exists(), (
+        "dry-run must not create the claude config directory"
+    )
+
+
+def test_run_init_dry_run_does_not_git_init_the_data_repo(tmp_path: Path):
+    """Even when the wiki data root would otherwise be git-init'd,
+    --dry-run must leave it untouched.
+    """
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    run_init(
+        wiki_system_root=fake_ws,
+        wiki_data_root=wiki_data,
+        agents_dir=agents_dir,
+        claude_dir=claude_dir,
+        dry_run=True,
+    )
+    assert not (wiki_data / ".git").exists()
+    assert not (wiki_data / "wiki.config.toml").exists()
+
+
+def test_run_init_dry_run_is_idempotent_with_existing_install(tmp_path: Path):
+    """Running --dry-run after a real init reports what WOULD change
+    (which in the idempotent case is still the same file list, just
+    rewriting in place) without breaking the existing install.
+    """
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    # Real install first
+    real_result = run_init(
+        wiki_system_root=fake_ws,
+        wiki_data_root=wiki_data,
+        agents_dir=agents_dir,
+        claude_dir=claude_dir,
+    )
+    assert (agents_dir / "skills" / "wiki" / "SKILL.md").exists()
+    sentinel_content = (
+        agents_dir / "skills" / "wiki" / "SKILL.md"
+    ).read_text()
+
+    # Dry run on top — no mutation
+    dry_result = run_init(
+        wiki_system_root=fake_ws,
+        wiki_data_root=wiki_data,
+        agents_dir=agents_dir,
+        claude_dir=claude_dir,
+        dry_run=True,
+    )
+    assert dry_result.dry_run is True
+    assert len(dry_result.rendered) == len(real_result.rendered)
+    # The already-installed file is unchanged (dry-run didn't rewrite it)
+    assert (
+        agents_dir / "skills" / "wiki" / "SKILL.md"
+    ).read_text() == sentinel_content
+
+
+def test_cli_init_dry_run_flag_emits_plan_without_writing(tmp_path: Path):
+    """CLI `wiki init --dry-run` exits 0, prints a plan, and creates
+    nothing on disk.
+    """
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "--no-json",
+            "init",
+            "--dry-run",
+            "--wiki-system-root",
+            str(fake_ws),
+            "--wiki-data-root",
+            str(wiki_data),
+            "--agents-dir",
+            str(agents_dir),
+            "--claude-dir",
+            str(claude_dir),
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    assert "dry" in r.stdout.lower()
+    assert not wiki_data.exists()
+    assert not agents_dir.exists()
+    assert not claude_dir.exists()
+
+
+def test_cli_init_dry_run_json_has_dry_run_field(tmp_path: Path):
+    fake_ws, wiki_data, agents_dir, claude_dir = _make_init_inputs(tmp_path)
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "init",
+            "--dry-run",
+            "--wiki-system-root",
+            str(fake_ws),
+            "--wiki-data-root",
+            str(wiki_data),
+            "--agents-dir",
+            str(agents_dir),
+            "--claude-dir",
+            str(claude_dir),
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    payload = json.loads(r.stdout)
+    assert payload["dry_run"] is True
+    assert len(payload["rendered"]) == 9
+    assert len(payload["symlinks"]) == 8

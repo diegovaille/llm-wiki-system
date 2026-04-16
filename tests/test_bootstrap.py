@@ -422,7 +422,14 @@ def test_submit_writes_proposed_staged_file_with_bootstrap_from(
     assert staged.bootstrap_from.question_key == "how-does-the-story-pipeline-work"
 
 
-def test_submit_noop_writes_nothing(wiki_root: Path):
+def test_submit_noop_writes_marker_not_staged_file(wiki_root: Path):
+    """Noop submit persists the decision as a marker under
+    staging/.bootstrap-noops/ so `--all` can skip the question on the next
+    pass. The marker is NOT visible in the main review queue (list_staged
+    does not descend into dot-prefixed subdirectories).
+    """
+    from wiki_system.bootstrap import _noop_marker_path
+
     result = run_submit_bootstrap(
         wiki_root=wiki_root,
         project="demo",
@@ -438,8 +445,13 @@ def test_submit_noop_writes_nothing(wiki_root: Path):
         },
     )
     assert result.action == "noop"
-    assert result.staging_path == ""
+    marker = _noop_marker_path(wiki_root, "demo", "how-does-x-work")
+    assert marker.exists()
+    assert result.staging_path == str(marker)
     assert list_staged(wiki_root, "demo") == []
+    payload = json.loads(marker.read_text())
+    assert payload["resolution"] == "noop"
+    assert payload["reason"] == "existing pages already answer this"
 
 
 def test_submit_rejects_proposal_missing_bootstrap_question(wiki_root: Path):
@@ -979,3 +991,456 @@ def test_cli_bootstrap_submit_noop_exit_3(wiki_root: Path, tmp_path: Path):
         ],
     )
     assert r.exit_code == 3, (r.stdout, r.stderr)
+
+
+# ---------- Noop markers: persist noop decisions so --all advances past them ----------
+
+
+def test_pick_next_all_mode_skips_noop_markers(wiki_root: Path):
+    """Regression for Issue 1: --all + noop was an infinite loop. Noop now
+    persists as a marker, so the picker treats the question as processed
+    and advances. Q1 noop'd, Q2 unprocessed → picker returns Q2.
+    """
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal={
+            "action": "noop",
+            "rationale": "already covered",
+            "bootstrap_question": {
+                "question_text": "How does the pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-pipeline-work",
+                "question_line": 3,
+            },
+        },
+    )
+    seeds = _load_seed_questions(wiki_root, "demo")
+    picked, remaining = _pick_next_all_mode_question(wiki_root, "demo", seeds)
+    assert picked.text == "What is the creation workflow?"
+    assert remaining == 1
+
+
+def test_pick_next_all_mode_exhausted_with_mixed_pending_and_noop(wiki_root: Path):
+    """Exhaustion covers the mixed case: one question pending, another noop'd."""
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    # Q1: pending proposal
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal=_valid_bootstrap_proposal(
+            bootstrap_question={
+                "question_text": "How does the pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-pipeline-work",
+                "question_line": 3,
+            }
+        ),
+    )
+    # Q2: noop'd
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal={
+            "action": "noop",
+            "rationale": "no useful content to distill",
+            "bootstrap_question": {
+                "question_text": "What is the creation workflow?",
+                "question_source": "seed",
+                "question_key": "what-is-the-creation-workflow",
+                "question_line": 4,
+            },
+        },
+    )
+    seeds = _load_seed_questions(wiki_root, "demo")
+    with pytest.raises(BootstrapAllExhausted, match="decision"):
+        _pick_next_all_mode_question(wiki_root, "demo", seeds)
+
+
+def test_prepare_refuses_noop_marker_without_replace_pending(
+    wiki_root: Path, tmp_path: Path
+):
+    """Single-question prepare refuses a noop'd question unless
+    --replace-pending is set. Same UX as pending-proposal dedupe.
+    """
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "story pipeline"})
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal={
+            "action": "noop",
+            "rationale": "prior adequate answer",
+            "bootstrap_question": {
+                "question_text": "How does the story pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-story-pipeline-work",
+                "question_line": 3,
+            },
+        },
+    )
+    with pytest.raises(BootstrapRejection, match="noop"):
+        run_prepare_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            retrieval_cfg=RetrievalConfig(),
+            question_arg="story pipeline",
+        )
+
+
+def test_prepare_replace_pending_allows_noop_marker(
+    wiki_root: Path, tmp_path: Path
+):
+    """--replace-pending lets prepare proceed on a noop'd question. The
+    marker stays on disk until submit clears it (symmetric with how
+    --replace-pending handles pending proposals).
+    """
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "story pipeline"})
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal={
+            "action": "noop",
+            "rationale": "was adequate before",
+            "bootstrap_question": {
+                "question_text": "How does the story pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-story-pipeline-work",
+                "question_line": 3,
+            },
+        },
+    )
+    result = run_prepare_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        retrieval_cfg=RetrievalConfig(),
+        question_arg="story pipeline",
+        replace_pending=True,
+    )
+    assert result.question.text == "How does the story pipeline work?"
+
+
+def test_submit_replace_pending_clears_noop_marker(wiki_root: Path):
+    """--replace-pending on submit deletes the noop marker AND writes the
+    new proposed staged file. Covers the retry-after-noop flow.
+    """
+    from wiki_system.bootstrap import _noop_marker_path
+
+    # Step 1: original noop
+    run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal={
+            "action": "noop",
+            "rationale": "original noop",
+            "bootstrap_question": {
+                "question_text": "How does the story pipeline work?",
+                "question_source": "seed",
+                "question_key": "how-does-the-story-pipeline-work",
+                "question_line": 3,
+            },
+        },
+    )
+    marker = _noop_marker_path(
+        wiki_root, "demo", "how-does-the-story-pipeline-work"
+    )
+    assert marker.exists()
+
+    # Step 2: retry with --replace-pending and a real create proposal
+    result = run_submit_bootstrap(
+        wiki_root=wiki_root,
+        project="demo",
+        proposal=_valid_bootstrap_proposal(),
+        replace_pending=True,
+    )
+    assert result.action == "create"
+    assert not marker.exists()
+    assert len(list_staged(wiki_root, "demo")) == 1
+
+
+def test_cli_bootstrap_prepare_all_advances_past_noop_regression(
+    wiki_root: Path, tmp_path: Path
+):
+    """End-to-end regression test for Issue 1: --all + noop used to re-emit
+    the same question forever. With marker persistence, a full CLI round
+    trip through submit(noop) followed by prepare --all returns Q2.
+    """
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "a.md").write_text("pipeline creation workflow")
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the creation workflow?",
+        ],
+    )
+    cfg_path = _setup_cli_config(tmp_path, wiki_root, repo, ["docs/**/*.md"])
+    runner = CliRunner()
+
+    # Submit a noop for Q1
+    noop_proposal_path = tmp_path / "noop.json"
+    noop_proposal_path.write_text(
+        json.dumps(
+            {
+                "action": "noop",
+                "rationale": "covered elsewhere",
+                "bootstrap_question": {
+                    "question_text": "How does the pipeline work?",
+                    "question_source": "seed",
+                    "question_key": "how-does-the-pipeline-work",
+                    "question_line": 3,
+                },
+            }
+        )
+    )
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "submit",
+            "demo",
+            "--proposal",
+            str(noop_proposal_path),
+        ],
+    )
+    assert r.exit_code == 3, (r.stdout, r.stderr)
+
+    # Now --all must return Q2, not re-emit Q1
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "prepare",
+            "demo",
+            "--all",
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    pkg = json.loads(r.stdout)
+    assert "What is the creation workflow?" in pkg["context"]
+    assert "How does the pipeline work?" not in pkg["context"]
+
+
+# ---------- Prompt package summary (Issue 2): skim-friendly top-level field ----------
+
+
+def test_prepare_prompt_package_has_summary_field(wiki_root: Path, tmp_path: Path):
+    """Prompt package exposes a `summary` dict so agents can skim
+    canonical_page_ids / source_doc_paths / question_key without parsing
+    the (potentially 85+ KB) context string.
+    """
+    from wiki_system.index import build_index, save_index
+
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    _write_existing_page(wiki_root, "demo", "demo-pipeline", title="Story Pipeline")
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+
+    project_cfg = _make_project(
+        tmp_path, files={"docs/pipeline.md": "story pipeline details"}
+    )
+    result = run_prepare_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        retrieval_cfg=RetrievalConfig(),
+        question_arg="story pipeline",
+    )
+    summary = result.package.summary
+    assert summary is not None
+    assert summary["question_key"] == "how-does-the-story-pipeline-work"
+    assert summary["question_text"] == "How does the story pipeline work?"
+    assert summary["question_source"] == "seed"
+    assert "demo-pipeline" in summary["canonical_page_ids"]
+    assert "docs/pipeline.md" in summary["source_doc_paths"]
+
+
+def test_prepare_all_mode_summary_includes_remaining_and_cap(
+    wiki_root: Path, tmp_path: Path
+):
+    _write_seed_questions(
+        wiki_root,
+        "demo",
+        [
+            "How does the pipeline work?",
+            "What is the editor flow?",
+        ],
+    )
+    project_cfg = _make_project(
+        tmp_path, files={"docs/a.md": "pipeline editor flow"}
+    )
+    result = run_prepare_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        retrieval_cfg=RetrievalConfig(),
+        all_mode=True,
+        max_proposals=3,
+    )
+    summary = result.package.summary
+    assert summary is not None
+    assert summary["remaining_questions"] == 2
+    assert summary["max_proposals_hint"] == 3
+
+
+def test_cli_prepare_summary_in_json_output(wiki_root: Path, tmp_path: Path):
+    """The serialized PromptPackage has `summary` at the top level so
+    `jq .summary` extracts it without loading the full context string.
+    """
+    from click.testing import CliRunner
+
+    from wiki_system.cli import main
+
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "pipeline.md").write_text("story pipeline details")
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    cfg_path = _setup_cli_config(tmp_path, wiki_root, repo, ["docs/**/*.md"])
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "prepare",
+            "demo",
+            "--question",
+            "story pipeline",
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    pkg = json.loads(r.stdout)
+    assert "summary" in pkg
+    assert pkg["summary"]["question_key"] == "how-does-the-story-pipeline-work"
+    assert "source_doc_paths" in pkg["summary"]
+
+
+# ---------- Resolve command (Issue 4): record decisions without full prepare cycle ----------
+
+
+def test_resolve_writes_noop_marker_with_reason(
+    wiki_root: Path, tmp_path: Path
+):
+    """`wiki bootstrap resolve --as noop --reason "..."` durably records a
+    decision so the question is skipped by future --all runs, without
+    going through prepare/synthesize/submit.
+    """
+    from wiki_system.bootstrap import _noop_marker_path, run_resolve_bootstrap
+
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "x"})
+    result = run_resolve_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        question_arg="story pipeline",
+        as_="noop",
+        reason="already covered by existing pages",
+    )
+    assert result.resolution == "noop"
+    marker_path = _noop_marker_path(
+        wiki_root, "demo", "how-does-the-story-pipeline-work"
+    )
+    assert marker_path.exists()
+    payload = json.loads(marker_path.read_text())
+    assert payload["reason"] == "already covered by existing pages"
+    assert payload["question_source"] == "seed"
+    assert payload["resolved_by"] == "wiki bootstrap resolve"
+
+
+def test_resolve_rejects_when_marker_already_exists(
+    wiki_root: Path, tmp_path: Path
+):
+    from wiki_system.bootstrap import run_resolve_bootstrap
+
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "x"})
+    run_resolve_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        question_arg="story pipeline",
+        as_="noop",
+    )
+    with pytest.raises(BootstrapRejection, match="already"):
+        run_resolve_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            question_arg="story pipeline",
+            as_="noop",
+        )
+
+
+def test_resolve_ad_hoc_question(wiki_root: Path, tmp_path: Path):
+    from wiki_system.bootstrap import _noop_marker_path, run_resolve_bootstrap
+
+    _write_seed_questions(wiki_root, "demo", ["Unrelated seed"])
+    project_cfg = _make_project(tmp_path, files={"docs/a.md": "x"})
+    result = run_resolve_bootstrap(
+        wiki_root=wiki_root,
+        project_cfg=project_cfg,
+        question_arg="video rendering",
+        as_="noop",
+        ad_hoc=True,
+    )
+    assert result.resolution == "noop"
+    assert _noop_marker_path(wiki_root, "demo", "video-rendering").exists()
+
+
+def test_cli_bootstrap_resolve_records_noop(wiki_root: Path, tmp_path: Path):
+    from click.testing import CliRunner
+
+    from wiki_system.bootstrap import _noop_marker_path
+    from wiki_system.cli import main
+
+    _write_seed_questions(wiki_root, "demo", ["How does the story pipeline work?"])
+    cfg_path = _setup_cli_config(
+        tmp_path, wiki_root, tmp_path / "repo", ["docs/**/*.md"]
+    )
+    runner = CliRunner()
+    r = runner.invoke(
+        main,
+        [
+            "--config",
+            str(cfg_path),
+            "bootstrap",
+            "resolve",
+            "demo",
+            "--question",
+            "story pipeline",
+            "--as",
+            "noop",
+            "--reason",
+            "already in existing pages",
+        ],
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    marker = _noop_marker_path(
+        wiki_root, "demo", "how-does-the-story-pipeline-work"
+    )
+    assert marker.exists()
+    payload = json.loads(marker.read_text())
+    assert payload["reason"] == "already in existing pages"

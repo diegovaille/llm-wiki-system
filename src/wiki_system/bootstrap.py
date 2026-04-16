@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -128,12 +129,28 @@ class BootstrapAllExhausted(BootstrapRejection):
 
 @dataclass
 class BootstrapSubmitResult:
-    """Everything `wiki bootstrap submit` returns on success."""
+    """Everything `wiki bootstrap submit` returns on success.
+
+    On noop, `staging_path` points to the persisted noop marker file
+    (not a state: proposed staged file — those live under staging/ and
+    are reviewable; markers live under staging/.bootstrap-noops/ and are
+    consumed by --all mode only).
+    """
 
     action: str  # "noop" | "create" | "update"
     staging_path: str
     proposed_page_id: str | None
     question_key: str
+
+
+@dataclass
+class BootstrapResolveResult:
+    """Everything `wiki bootstrap resolve` returns on success."""
+
+    resolution: str  # "noop"
+    marker_path: str
+    question_key: str
+    question_text: str
 
 
 # ---------- Seed question loading + resolution ----------
@@ -337,6 +354,91 @@ def _existing_pending_for_question(
     return None
 
 
+# ---------- Noop markers ----------
+#
+# A noop marker durably records that a seed question was considered and
+# resolved as noop. Without it, `--all` mode would re-emit the same
+# question forever on a well-seeded wiki because the noop path writes no
+# staged file — the picker can't tell the question was already processed.
+#
+# Markers live under `<project>/staging/.bootstrap-noops/<question_key>.json`.
+# The dot-prefix keeps them out of `list_staged` (which only globs `*.md`
+# in the top level of staging/) and out of the `wiki review` queue — they
+# are not reviewable artifacts, they are skip signals. Delete a marker to
+# retry bootstrapping that question.
+
+
+def _noop_markers_dir(wiki_root: Path, project: str) -> Path:
+    """Directory holding noop decision markers for this project."""
+    return wiki_root / project / "staging" / ".bootstrap-noops"
+
+
+def _noop_marker_path(wiki_root: Path, project: str, question_key: str) -> Path:
+    """Path to the noop marker for a specific question_key. May or may not exist."""
+    return _noop_markers_dir(wiki_root, project) / f"{question_key}.json"
+
+
+def _write_noop_marker(
+    wiki_root: Path,
+    project: str,
+    bootstrap_from: BootstrapFrom,
+    *,
+    reason: str | None = None,
+    resolved_by: str = "wiki bootstrap",
+) -> Path:
+    """Persist a noop decision so --all skips the question on future passes.
+
+    Contents mirror the `bootstrap_from` provenance block plus an ISO-8601
+    timestamp and optional `reason` (free text — usually the proposal's
+    rationale for submit-originated noops, or the --reason flag value for
+    resolve-originated noops). The marker is the audit trail for "this
+    question was considered, the decision was noop, here's why."
+    """
+    dir_path = _noop_markers_dir(wiki_root, project)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "question_text": bootstrap_from.question_text,
+        "question_source": bootstrap_from.question_source,
+        "question_key": bootstrap_from.question_key,
+        "question_line": bootstrap_from.question_line,
+        "resolution": "noop",
+        "reason": reason,
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_by": resolved_by,
+    }
+    path = _noop_marker_path(wiki_root, project, bootstrap_from.question_key)
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def _existing_noop_for_question(
+    wiki_root: Path, project: str, question_key: str
+) -> Path | None:
+    """Return the noop marker path if one exists for this question_key, else None."""
+    path = _noop_marker_path(wiki_root, project, question_key)
+    return path if path.exists() else None
+
+
+def _question_prior_decision(
+    wiki_root: Path, project: str, question_key: str
+) -> tuple[str, Path] | None:
+    """Check for any prior bootstrap decision on this question.
+
+    Returns `("pending", staging_path)` if a pending proposal exists,
+    `("noop", marker_path)` if a noop marker exists, or None. Pending
+    takes precedence (if both exist, the pending proposal is the active
+    item — this shouldn't normally happen since submit clears markers
+    when replacing, but the check is defensive).
+    """
+    pending = _existing_pending_for_question(wiki_root, project, question_key)
+    if pending is not None:
+        return ("pending", pending)
+    noop = _existing_noop_for_question(wiki_root, project, question_key)
+    if noop is not None:
+        return ("noop", noop)
+    return None
+
+
 def _build_prepare_context(
     *,
     project: str,
@@ -506,23 +608,30 @@ def _build_prepare_instructions(
 def _pick_next_all_mode_question(
     wiki_root: Path, project: str, seed_questions: list[BootstrapQuestion]
 ) -> tuple[BootstrapQuestion, int]:
-    """Find the first seed question without a pending proposal.
+    """Find the first seed question with no prior bootstrap decision.
 
     Iterates seed_questions in file order. Returns the first question
-    whose question_key has NO pending proposed staged file, plus the
-    count of remaining unprocessed questions *including the returned
-    one* (so the caller can report "this is X of Y").
+    whose question_key has NEITHER a pending proposed staged file NOR a
+    noop marker, plus the count of remaining unprocessed questions
+    *including the returned one* (so the caller can report "this is X of Y").
 
     Raises `BootstrapAllExhausted` when every seed question already has
-    a pending proposal. The caller (CLI) catches this and exits 3.
+    some prior decision (pending proposal or persisted noop marker).
+    The caller (CLI) catches this and exits 3.
 
     A seed question is "processed" for the purposes of this scan when
-    a pending proposed staged file exists with matching `question_key`.
+    either (a) a pending proposed staged file exists with matching
+    question_key, or (b) a noop marker exists under
+    `staging/.bootstrap-noops/<question_key>.json`. Persisting noop
+    decisions is what fixes the `--all + noop = infinite loop` bug:
+    without the marker, the picker has no way to know the question was
+    already considered and would re-emit it every pass.
+
     Questions that were promoted to `pages/` and archived are NOT
     considered processed by this function — if the user wants --all to
     skip already-promoted topics, they should delete the seed question
     from `seed-questions.md` or pair --all with a follow-up pass that
-    deletes stale seed entries. (v0.2.2 may add a manifest-based check.)
+    deletes stale seed entries. (v0.2.3 may add a manifest-based check.)
     """
     if not seed_questions:
         raise BootstrapAllExhausted(
@@ -531,15 +640,18 @@ def _pick_next_all_mode_question(
         )
     unprocessed: list[BootstrapQuestion] = []
     for q in seed_questions:
-        pending = _existing_pending_for_question(wiki_root, project, q.key)
-        if pending is None:
+        if _question_prior_decision(wiki_root, project, q.key) is None:
             unprocessed.append(q)
     if not unprocessed:
         raise BootstrapAllExhausted(
             "every seed question in queries/seed-questions.md already has "
-            "a pending bootstrap proposal. Review or promote them first "
-            "(wiki review <project>), or use --replace-pending on a "
-            "specific --question to regenerate."
+            "a prior bootstrap decision (pending proposal or persisted "
+            "noop marker). Review or promote pending ones "
+            "(wiki review <project>), clear a noop to retry "
+            "(delete the marker under staging/.bootstrap-noops/, pass "
+            "--replace-pending on a specific --question, or run "
+            "`wiki bootstrap resolve --as noop` in reverse), or delete "
+            "the seed question from queries/seed-questions.md."
         )
     return unprocessed[0], len(unprocessed)
 
@@ -604,15 +716,25 @@ def run_prepare_bootstrap(
             )
         question = resolve_question(question_arg, seed_questions, ad_hoc=ad_hoc)
 
-    pending = _existing_pending_for_question(
-        wiki_root, project_cfg.name, question.key
-    )
-    if pending is not None and not replace_pending:
-        raise BootstrapRejection(
-            f"a pending bootstrap proposal already exists for this question "
-            f"at {pending}. Promote or delete it first, or pass "
-            f"--replace-pending to regenerate."
-        )
+    prior = _question_prior_decision(wiki_root, project_cfg.name, question.key)
+    pending: Path | None = None
+    if prior is not None:
+        kind, path = prior
+        if kind == "pending":
+            pending = path
+        if not replace_pending:
+            if kind == "pending":
+                raise BootstrapRejection(
+                    f"a pending bootstrap proposal already exists for this question "
+                    f"at {path}. Promote or delete it first, or pass "
+                    f"--replace-pending to regenerate."
+                )
+            raise BootstrapRejection(
+                f"this question was previously resolved as noop at {path}. "
+                f"The marker is why `--all` skips it. To retry, pass "
+                f"--replace-pending (submit will delete the marker) or "
+                f"delete {path} manually."
+            )
 
     project_intent = _load_project_intent(wiki_root, project_cfg.name)
 
@@ -663,12 +785,28 @@ def run_prepare_bootstrap(
         max_proposals=max_proposals,
     )
 
+    # Skim-friendly summary (Issue 2). Agents read this FIRST to decide
+    # whether they can noop upfront based on existing coverage, or to
+    # narrow their focus before parsing the full context string (which
+    # may be 85+ KB on a richly-seeded wiki).
+    summary: dict[str, Any] = {
+        "question_key": question.key,
+        "question_text": question.text,
+        "question_source": question.source,
+        "canonical_page_ids": [r.id for r in query_results],
+        "source_doc_paths": [d.path for d in source_docs],
+        "existing_pending_path": str(pending) if pending is not None else None,
+        "remaining_questions": remaining_count,
+        "max_proposals_hint": max_proposals,
+    }
+
     package = PromptPackage(
         system=SYSTEM_PROMPT,
         context=context,
         schema=_schema_description(),
         instructions=instructions,
         allowed_actions=list(ALLOWED_ACTIONS),
+        summary=summary,
     )
 
     return BootstrapPrepareResult(
@@ -739,15 +877,41 @@ def run_submit_bootstrap(
         raise BootstrapRejection(f"bootstrap_question invalid: {e}") from e
 
     if action == "noop":
+        # Persist the noop decision as a marker so `--all` mode can skip
+        # this question on its next pass. This is what fixes Issue 1:
+        # without the marker, the picker re-emits the same question on
+        # every `prepare --all` call, producing an infinite loop on a
+        # well-seeded wiki. The proposal's `rationale` (if present) is
+        # recorded as the marker's `reason` so the audit trail explains
+        # WHY the noop was chosen.
+        existing_marker = _existing_noop_for_question(
+            wiki_root, project, bootstrap_from.question_key
+        )
+        if existing_marker is not None:
+            if not replace_pending:
+                raise BootstrapRejection(
+                    f"question {bootstrap_from.question_key!r} already has a "
+                    f"noop marker at {existing_marker}. Pass --replace-pending "
+                    f"to overwrite, or delete the marker manually."
+                )
+            existing_marker.unlink()
+        marker_path = _write_noop_marker(
+            wiki_root,
+            project,
+            bootstrap_from,
+            reason=proposal.get("rationale"),
+        )
         return BootstrapSubmitResult(
             action="noop",
-            staging_path="",
+            staging_path=str(marker_path),
             proposed_page_id=None,
             question_key=bootstrap_from.question_key,
         )
 
     # Dedupe check at submit time too — prepare already enforced it but
-    # the agent may have submitted against a stale prepare-package.
+    # the agent may have submitted against a stale prepare-package. We
+    # check BOTH pending proposals and noop markers: either counts as a
+    # prior decision that the agent is now replacing.
     pending = _existing_pending_for_question(
         wiki_root, project, bootstrap_from.question_key
     )
@@ -759,6 +923,18 @@ def run_submit_bootstrap(
                 f"delete it first, or re-run with --replace-pending."
             )
         pending.unlink()
+    existing_noop = _existing_noop_for_question(
+        wiki_root, project, bootstrap_from.question_key
+    )
+    if existing_noop is not None:
+        if not replace_pending:
+            raise BootstrapRejection(
+                f"question {bootstrap_from.question_key!r} was previously "
+                f"resolved as noop at {existing_noop}. Pass --replace-pending "
+                f"to overwrite and submit the new {action!r} proposal, or "
+                f"delete the marker manually."
+            )
+        existing_noop.unlink()
 
     try:
         result = write_proposed_staged_file(
@@ -777,4 +953,81 @@ def run_submit_bootstrap(
         staging_path=str(result.path),
         proposed_page_id=result.proposed_page_id,
         question_key=bootstrap_from.question_key,
+    )
+
+
+# ---------- Resolve ----------
+
+
+def run_resolve_bootstrap(
+    *,
+    wiki_root: Path,
+    project_cfg: ProjectConfig,
+    question_arg: str,
+    as_: str,
+    reason: str | None = None,
+    ad_hoc: bool = False,
+    replace_existing: bool = False,
+) -> BootstrapResolveResult:
+    """Durably record a bootstrap decision without running prepare/submit.
+
+    This is the complement to `bootstrap submit`: when the agent has
+    walked through the full prepare → synthesize cycle and decided noop,
+    `submit` writes the marker as a side effect. But sometimes the user
+    already knows a seed question doesn't need bootstrapping (out of
+    scope, already covered by another canonical page, irrelevant to this
+    project) and wants to stop `--all` from emitting it without running
+    the full cycle. `resolve --as noop` is the shortcut.
+
+    v0.2.2 scope: only `as_="noop"` is supported. The marker lives under
+    `staging/.bootstrap-noops/<question_key>.json` and is indistinguishable
+    from a submit-originated marker except for the `resolved_by` field.
+
+    Rejects if the question already has a pending bootstrap proposal —
+    that's an active item the user should review/promote/delete first,
+    rather than marking it noop in parallel. Rejects if a noop marker
+    already exists unless `replace_existing=True`.
+    """
+    if as_ != "noop":
+        raise BootstrapRejection(
+            f"--as must be 'noop' (only supported resolution in v0.2.2), "
+            f"got {as_!r}"
+        )
+    seed_questions = _load_seed_questions(wiki_root, project_cfg.name)
+    question = resolve_question(question_arg, seed_questions, ad_hoc=ad_hoc)
+
+    pending = _existing_pending_for_question(
+        wiki_root, project_cfg.name, question.key
+    )
+    if pending is not None:
+        raise BootstrapRejection(
+            f"question {question.key!r} has a pending bootstrap proposal at "
+            f"{pending}. Review, promote, or delete it before resolving — "
+            f"or let it flow through `wiki bootstrap submit`."
+        )
+
+    existing = _existing_noop_for_question(
+        wiki_root, project_cfg.name, question.key
+    )
+    if existing is not None and not replace_existing:
+        raise BootstrapRejection(
+            f"question {question.key!r} already has a noop marker at "
+            f"{existing}. Pass --replace-existing to overwrite, or delete "
+            f"the marker manually."
+        )
+    if existing is not None:
+        existing.unlink()
+
+    marker_path = _write_noop_marker(
+        wiki_root,
+        project_cfg.name,
+        question.to_bootstrap_from(),
+        reason=reason,
+        resolved_by="wiki bootstrap resolve",
+    )
+    return BootstrapResolveResult(
+        resolution="noop",
+        marker_path=str(marker_path),
+        question_key=question.key,
+        question_text=question.text,
     )

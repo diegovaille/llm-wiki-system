@@ -2,7 +2,7 @@
 
 `wiki-system` ships adapter templates, not rendered adapter files. The `wiki init` command renders the templates with paths specific to your machine and writes them into `~/.claude/` (or wherever your Claude Code config lives).
 
-The result: `/wiki-query`, `/wiki-capture`, `/wiki-review`, and `/wiki-promote` are available in every Claude Code session on this machine. The plugin works globally, but only does useful work inside repos that are registered as wiki projects in `wiki.config.toml`.
+The result: `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`, `/wiki-sync`, and `/wiki-bootstrap` are available in every Claude Code session on this machine. The plugin works globally, but only does useful work inside repos that are registered as wiki projects in `wiki.config.toml`.
 
 ## One-time setup
 
@@ -32,8 +32,8 @@ What this does:
 
 1. Seeds a `~/Git/wiki/wiki.config.toml` from `wiki.config.example.toml` if none exists. Edit it after the run to add a `[[projects]]` block for each codebase you want wiki-enabled.
 2. Renders every template under `adapters/claude/templates/` with your actual paths substituted for `{{WIKI_CMD}}`, `{{WIKI_CONFIG_PATH}}`, and `{{WIKI_DATA_ROOT}}`.
-3. **Canonical install (shared across agent frameworks):** writes the rendered skill to `~/.agents/skills/wiki/SKILL.md` and slash commands to `~/.agents/commands/wiki-{query,capture,review,promote}.md`. Any agent framework that discovers `~/.agents/` as its skill source can reuse these.
-4. **Claude Code install:** creates symlinks under `~/.claude/skills/wiki` and `~/.claude/commands/wiki-*.md` pointing at the canonical files above. Claude Code reads its own config directory but follows the symlinks, so a single canonical copy serves every agent.
+3. **Canonical install (shared across agent frameworks):** writes the rendered `wiki` and `wiki-bootstrap` skills to `~/.agents/skills/wiki/SKILL.md` and `~/.agents/skills/wiki-bootstrap/SKILL.md`, and slash commands to `~/.agents/commands/wiki-{query,capture,review,promote,sync,bootstrap}.md`. Any agent framework that discovers `~/.agents/` as its skill source can reuse these.
+4. **Claude Code install:** creates symlinks under `~/.claude/skills/wiki`, `~/.claude/skills/wiki-bootstrap`, and `~/.claude/commands/wiki-*.md` pointing at the canonical files above. Claude Code reads its own config directory but follows the symlinks, so a single canonical copy serves every agent.
 5. Writes a `claude-md-snippet.md` helper to `adapters/claude/_generated/` (gitignored). Paste its content into any project's `CLAUDE.md` you want to wiki-enable, if you want start-of-session orientation.
 6. Prints a `permissions` JSON snippet for your global Claude settings (see next step).
 
@@ -43,6 +43,15 @@ Flags:
 - `--wiki-data-root PATH` — override where the wiki data repo lives (default: `~/Git/wiki`).
 - `--agents-dir PATH` — override the shared-agent canonical location (default: `~/.agents`).
 - `--claude-dir PATH` — override the Claude Code config directory (default: `~/.claude`).
+- `--dry-run` — print the full plan (rendered files, symlinks, config to seed, permissions snippet) without touching disk. No files, directories, or symlinks are created; no `git init` is run. Safe to use on any machine to preview exactly what a real `wiki init` would change. Re-run without `--dry-run` to apply.
+
+**Recommended first run:**
+
+```bash
+~/Git/wiki-system/.venv/bin/wiki --no-json init --dry-run
+```
+
+Review the plan, then repeat without `--dry-run`.
 
 ### 3. Add the permissions snippet
 
@@ -76,13 +85,13 @@ The `name` is the project identifier used everywhere (`wiki query my-project "..
 
 ### 5. Restart Claude Code and verify
 
-Open a new Claude Code session in any directory. Type `/wiki` — autocomplete should show `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`. Run:
+Open a new Claude Code session in any directory. Type `/wiki` — autocomplete should show `/wiki-query`, `/wiki-capture`, `/wiki-review`, `/wiki-promote`, `/wiki-sync`, `/wiki-bootstrap`. Run:
 
 ```
 /wiki-query my-project "test"
 ```
 
-from a repo whose path matches one of your `[[projects]] repo_path` entries. You should get ranked JSON results or exit code 2 (no results). Both are success.
+from a repo whose path matches one of your `[[projects]] repo_path` entries. You should get ranked JSON results, exit code 2 (no results), or exit code 4 (index unavailable — run `wiki index my-project` first). Any of these are success signals.
 
 ## Per-project opt-in (optional)
 
@@ -104,16 +113,22 @@ cd ~/Git/wiki-system && .venv/bin/wiki --no-json init
 
 ```bash
 # Remove the Claude Code symlinks
-rm -rf ~/.claude/skills/wiki ~/.claude/commands/wiki-query.md \
+rm -rf ~/.claude/skills/wiki ~/.claude/skills/wiki-bootstrap \
+       ~/.claude/commands/wiki-query.md \
        ~/.claude/commands/wiki-capture.md \
        ~/.claude/commands/wiki-review.md \
-       ~/.claude/commands/wiki-promote.md
+       ~/.claude/commands/wiki-promote.md \
+       ~/.claude/commands/wiki-sync.md \
+       ~/.claude/commands/wiki-bootstrap.md
 
 # Remove the canonical files under ~/.agents/ (only if no other agent uses them)
-rm -rf ~/.agents/skills/wiki ~/.agents/commands/wiki-query.md \
+rm -rf ~/.agents/skills/wiki ~/.agents/skills/wiki-bootstrap \
+       ~/.agents/commands/wiki-query.md \
        ~/.agents/commands/wiki-capture.md \
        ~/.agents/commands/wiki-review.md \
-       ~/.agents/commands/wiki-promote.md
+       ~/.agents/commands/wiki-promote.md \
+       ~/.agents/commands/wiki-sync.md \
+       ~/.agents/commands/wiki-bootstrap.md
 ```
 
 Then remove the `permissions.allow` entries from `~/.claude/settings.json`. Your wiki data at `~/Git/wiki/` is unaffected; delete it separately if you want to remove the content too.

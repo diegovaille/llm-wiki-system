@@ -12,6 +12,7 @@ from wiki_system.bootstrap import (
     BootstrapAllExhausted,
     BootstrapRejection,
     run_prepare_bootstrap,
+    run_resolve_bootstrap,
     run_submit_bootstrap,
 )
 from wiki_system.capture import (
@@ -405,7 +406,7 @@ def review(ctx: click.Context, project: str) -> None:
 
 @main.group()
 def bootstrap() -> None:
-    """Seed-question-driven page synthesis (prepare/submit)."""
+    """Seed-question-driven page synthesis (prepare/submit/resolve)."""
 
 
 @bootstrap.command("prepare")
@@ -622,6 +623,96 @@ def bootstrap_submit(
         ctx.exit(3)
 
 
+@bootstrap.command("resolve")
+@click.argument("project")
+@click.option(
+    "--question",
+    "question_arg",
+    required=True,
+    help=(
+        "The seed question (or substring thereof) to resolve. Matched "
+        "against queries/seed-questions.md with the same rules as "
+        "`bootstrap prepare --question`. Pass --ad-hoc for free text."
+    ),
+)
+@click.option(
+    "--as",
+    "as_",
+    type=click.Choice(["noop"]),
+    required=True,
+    help=(
+        "Resolution type. Only 'noop' is supported in v0.2.2 — records a "
+        "durable decision that the question does not need a bootstrap "
+        "pass, so `--all` skips it on future iterations."
+    ),
+)
+@click.option(
+    "--reason",
+    default=None,
+    help="Optional free-text justification stored in the marker for audit.",
+)
+@click.option(
+    "--ad-hoc",
+    is_flag=True,
+    help="Allow --question to be free text not in seed-questions.md.",
+)
+@click.option(
+    "--replace-existing",
+    is_flag=True,
+    help="Overwrite an existing noop marker for this question.",
+)
+@click.pass_context
+def bootstrap_resolve(
+    ctx: click.Context,
+    project: str,
+    question_arg: str,
+    as_: str,
+    reason: str | None,
+    ad_hoc: bool,
+    replace_existing: bool,
+) -> None:
+    """Durably record a bootstrap decision without running prepare/submit.
+
+    Writes a noop marker under
+    `<wiki_root>/<project>/staging/.bootstrap-noops/<question_key>.json`
+    so `wiki bootstrap prepare --all` skips the question on future passes.
+    Use this when you already know a seed question doesn't need a
+    bootstrap page (out of scope, covered elsewhere, trivially answered)
+    and want to advance the --all loop without running the full synthesis
+    cycle. Delete the marker file to undo.
+    """
+    cfg = _load_config_or_die(ctx)
+    project_cfg = _get_project_or_die(ctx, cfg, project)
+    wiki_root = cfg.wiki_root_path()
+    try:
+        result = run_resolve_bootstrap(
+            wiki_root=wiki_root,
+            project_cfg=project_cfg,
+            question_arg=question_arg,
+            as_=as_,
+            reason=reason,
+            ad_hoc=ad_hoc,
+            replace_existing=replace_existing,
+        )
+    except BootstrapRejection as e:
+        click.echo(str(e), err=True)
+        ctx.exit(2)
+    payload = {
+        "resolution": result.resolution,
+        "marker_path": result.marker_path,
+        "question_key": result.question_key,
+        "question_text": result.question_text,
+    }
+
+    def _text(p):
+        return (
+            f"resolved: {p['resolution']} for question {p['question_key']!r} "
+            f"-> {p['marker_path']}"
+        )
+
+    _emit(ctx, payload, _text)
+
+
 # ---------- sync ----------
 
 
@@ -751,6 +842,16 @@ def sync_cmd(
     "pointing back at the canonical files under --agents-dir. Defaults "
     "to ~/.claude.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help=(
+        "Print what would be written without touching disk. No files, "
+        "directories, or symlinks are created; no `git init` is run; "
+        "wiki.config.toml is NOT seeded. The output still shows the "
+        "full plan so you can preview before committing."
+    ),
+)
 @click.pass_context
 def init_cmd(
     ctx: click.Context,
@@ -758,6 +859,7 @@ def init_cmd(
     wiki_data_root: Path,
     agents_dir: Path,
     claude_dir: Path,
+    dry_run: bool,
 ) -> None:
     """Generate per-machine adapter artifacts with resolved local paths.
 
@@ -766,6 +868,8 @@ def init_cmd(
     so Claude Code discovers them. Seeds a wiki.config.toml from the
     example if the wiki data repo is empty. Prints a permissions snippet
     for your Claude settings. Idempotent — re-run after template edits.
+
+    Pass --dry-run to preview without writing anything.
     """
     if wiki_system_root is None:
         wiki_system_root = Path(__file__).resolve().parent.parent.parent
@@ -774,8 +878,10 @@ def init_cmd(
         wiki_data_root=wiki_data_root,
         agents_dir=agents_dir,
         claude_dir=claude_dir,
+        dry_run=dry_run,
     )
     payload = {
+        "dry_run": result.dry_run,
         "rendered": [str(p) for p in result.rendered],
         "symlinks": [
             {"link": str(link), "target": str(target)}
@@ -788,25 +894,36 @@ def init_cmd(
     }
 
     def _text(p):
-        lines = [f"Rendered {len(p['rendered'])} canonical file(s):"]
+        action_verb = "Would render" if p["dry_run"] else "Rendered"
+        link_verb = "Would create" if p["dry_run"] else "Created"
+        seed_verb = "Would seed" if p["dry_run"] else "Seeded"
+        lines: list[str] = []
+        if p["dry_run"]:
+            lines.append(
+                "DRY RUN — no files, directories, or symlinks will be "
+                "created. Remove --dry-run to apply."
+            )
+            lines.append("")
+        lines.append(f"{action_verb} {len(p['rendered'])} canonical file(s):")
         for path in p["rendered"]:
             lines.append(f"  - {path}")
         if p["symlinks"]:
             lines.append("")
             lines.append(
-                f"Created {len(p['symlinks'])} Claude Code symlink(s):"
+                f"{link_verb} {len(p['symlinks'])} Claude Code symlink(s):"
             )
             for link in p["symlinks"]:
                 lines.append(f"  - {link['link']} -> {link['target']}")
         if p["seeded_config"]:
             lines.append("")
             lines.append(
-                f"Seeded wiki.config.toml at: {p['seeded_config']}"
+                f"{seed_verb} wiki.config.toml at: {p['seeded_config']}"
             )
-            lines.append(
-                "Edit it and add a [[projects]] block for each codebase "
-                "you want wiki-enabled."
-            )
+            if not p["dry_run"]:
+                lines.append(
+                    "Edit it and add a [[projects]] block for each codebase "
+                    "you want wiki-enabled."
+                )
         lines.append("")
         lines.append(
             "Add this to ~/.claude/settings.json (merge with any existing "
@@ -815,10 +932,15 @@ def init_cmd(
         lines.append("")
         lines.append(p["permissions_snippet"])
         lines.append("")
-        lines.append(
-            "Then start a new Claude Code session and type `/wiki` to see "
-            "the available slash commands."
-        )
+        if p["dry_run"]:
+            lines.append(
+                "Re-run without --dry-run to apply the plan above."
+            )
+        else:
+            lines.append(
+                "Then start a new Claude Code session and type `/wiki` "
+                "to see the available slash commands."
+            )
         return "\n".join(lines)
 
     _emit(ctx, payload, _text)
