@@ -21,7 +21,7 @@ model_hint = "opus"
 
 [[projects]]
 name = "demo"
-repo_path = "~/Git/ai-bible-project"
+repo_path = "~/Git/demo"
 source_globs = ["docs/**/*.md"]
 """
     )
@@ -47,17 +47,17 @@ runtime = "claude-code"
 model_hint = "opus"
 [[projects]]
 name = "demo"
-repo_path = "~/Git/ai-bible-project"
+repo_path = "~/Git/demo"
 source_globs = ["docs/**/*.md"]
 [[projects]]
-name = "classcloud"
-repo_path = "~/Git/classcloud"
+name = "other-project"
+repo_path = "~/Git/other-project"
 source_globs = ["docs/**/*.md"]
 """
     )
     cfg = load_config(cfg_path)
-    p = cfg.get_project("classcloud")
-    assert p.name == "classcloud"
+    p = cfg.get_project("other-project")
+    assert p.name == "other-project"
     with pytest.raises(KeyError):
         cfg.get_project("nonexistent")
 

@@ -8,11 +8,11 @@ from wiki_system.schema import PageFrontmatter, PageType, PageStatus
 
 def _valid_page_data(**overrides):
     base = {
-        "id": "cc-moderation-system",
-        "title": "ClassCloud Moderation System",
+        "id": "demo-moderation-system",
+        "title": "Demo Moderation System",
         "summary": "End-to-end overview.",
         "type": "system",
-        "project": "classcloud",
+        "project": "demo",
         "domains": ["moderation", "policy"],
         "status": "active",
         "aliases": ["moderation engine"],
@@ -27,7 +27,7 @@ def _valid_page_data(**overrides):
 
 def test_valid_page_parses():
     page = PageFrontmatter.model_validate(_valid_page_data())
-    assert page.id == "cc-moderation-system"
+    assert page.id == "demo-moderation-system"
     assert page.type == PageType.SYSTEM
     assert page.status == PageStatus.ACTIVE
     assert page.updated_at == date(2026, 4, 12)
@@ -45,13 +45,13 @@ def test_invalid_status_rejected():
 
 def test_superseded_by_only_valid_when_status_superseded():
     # Allowed
-    data = _valid_page_data(status="superseded", superseded_by="cc-moderation-v2")
+    data = _valid_page_data(status="superseded", superseded_by="demo-moderation-v2")
     p = PageFrontmatter.model_validate(data)
-    assert p.superseded_by == "cc-moderation-v2"
+    assert p.superseded_by == "demo-moderation-v2"
     # Disallowed: active + superseded_by
     with pytest.raises(ValidationError, match="superseded_by"):
         PageFrontmatter.model_validate(
-            _valid_page_data(status="active", superseded_by="cc-moderation-v2")
+            _valid_page_data(status="active", superseded_by="demo-moderation-v2")
         )
 
 
