@@ -871,7 +871,26 @@ Agents read `summary` first to decide whether noop is obvious (e.g. `canonical_p
 
 - **No `--unresolve` flag.** To retry a noop'd question, delete the marker file manually or pass `--replace-pending` to prepare/submit — both work. A dedicated "un-noop" flag is adds more surface area than it earns.
 - **No GC / housekeeping for stale markers.** Markers live forever by default. They're small (a few hundred bytes each) and serve as an audit trail.
-- **No manifest-aware "already promoted" dedupe.** Still deferred to v0.2.3. A question whose page was promoted and whose staged file was archived still re-emits from `--all` unless the user (a) deletes the seed line, (b) runs `bootstrap resolve --as noop`, or (c) lets prepare emit it and submits noop (which then persists).
+- **No manifest-aware "already promoted" dedupe.** Still deferred (v0.2.3 shipped `wiki doctor` instead; see below). A question whose page was promoted and whose staged file was archived still re-emits from `--all` unless the user (a) deletes the seed line, (b) runs `bootstrap resolve --as noop`, or (c) lets prepare emit it and submits noop (which then persists).
+
+**v0.2.3 addendum — `wiki doctor` (stale-reference detection against an external code graph):**
+
+`wiki doctor <project> --graph <graph.json>` landed in v0.2.3. It is a read-only health check: it never writes to `pages/`, `views/`, or any other wiki file. It cross-checks code identifiers named in canonical page bodies (loaded via `load_index`, so `wiki index` must have run first) against an external AST-derived code graph and reports which ones no longer exist there.
+
+**The graph is an external input, not a coupled dependency.** `--graph` accepts any JSON file matching a minimal node shape — `wiki-system` has no import-time or runtime coupling to `graphify` (or any other extraction tool) that produces one. `load_graph_symbols` reads only the top-level `"nodes"` array; it tolerates either graph shape graphify emits — clustered output (a `"links"` key) or raw extraction output (an `"edges"` key) — because it never looks at `links`/`edges` at all. Per node it reads `source_file` (populates the file set) and `label`/`norm_label` (populates the symbol set, `norm_label` preferred when present, lowercased and with a trailing `()` stripped for comparison).
+
+**Identifier grammar.** `extract_identifiers` scans page bodies for backtick-delimited spans only — prose mentions outside backticks are ignored, and fenced code blocks are stripped before scanning so multi-line code samples never get treated as identifiers. Three shapes are recognized:
+- **Python paths** — `[\w./-]+\.py` (e.g. `` `app/chat/service.py` ``)
+- **Function calls** — `` `function()` `` or `` `.method()` ``, leading dot stripped for comparison
+- **Class-like names** — `^[A-Z][A-Za-z0-9]+$`, minus a small stoplist (`True`, `False`, `None`). This is deliberately broad rather than a strict two-hump CamelCase pattern — a stricter regex missed 529/1825 class-like labels in a real graphify graph (e.g. `LLMProvider`, `AIService`, `Chat`) — at the cost of some capitalized-prose false positives, which the confidence split below absorbs.
+
+**High vs advisory confidence.** Path misses are reported at `"high"` confidence: `_path_in_graph` does suffix-tolerant matching (checking `endswith("/" + span)` in either direction) so a genuine miss survives prefix differences between the page's path and the graph's, making a path miss a strong signal the file moved or was deleted. Function/class misses are reported at `"advisory"` confidence only: a bare symbol name absent from the graph may simply live outside the graphed subtree (a different repo, a vendored dependency, a subtree graphify wasn't pointed at) rather than being genuinely stale. Callers should treat `high` findings as near-certain and `advisory` findings as prompts for a human to check, not as facts.
+
+**Exit codes:** `0` clean (no findings), `2` findings present, `4` index or graph unavailable (missing/unreadable `.wiki-index.json` — i.e. `wiki index` hasn't run — or a missing/invalid graph JSON file).
+
+**Non-goals for v0.2.3:**
+- **No auto-fixing.** `doctor` only reports; it never edits, deletes, or rewrites pages. Reconciling a finding — editing the page, or accepting it as a known gap — is a human/agent decision made from the report, not a doctor side effect.
+- **No `code_refs:` frontmatter yet.** Explicit page-to-symbol anchoring (a frontmatter field pages could declare instead of relying on backtick-span inference) is deferred to v0.3, and only if real `doctor` findings show that inference-based extraction isn't precise enough to justify the extra authoring burden.
 
 **Why start with hand-written pages instead of `bootstrap`:**
 - Forces a firsthand feel for the schema

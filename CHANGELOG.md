@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-08
+
+### Added
+- `wiki doctor <project> --graph <graph.json>`: report code identifiers in
+  canonical pages that no longer exist in an external AST code graph
+  (e.g. graphify). Exit 0 clean / 2 findings / 4 input unavailable.
+- `docs/SEED-HARVEST.md`: manual procedure for harvesting graph-report
+  highlights into seed questions.
+
 ## [0.2.2] - 2026-04-12
 
 ### Added
