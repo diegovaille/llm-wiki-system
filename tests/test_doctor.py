@@ -1,4 +1,9 @@
-from wiki_system.doctor import Identifier, extract_identifiers
+import json
+from pathlib import Path
+
+import pytest
+
+from wiki_system.doctor import Identifier, GraphSymbols, extract_identifiers, load_graph_symbols
 
 
 def test_extracts_py_paths_functions_and_classes():
@@ -48,3 +53,50 @@ def test_acronym_and_single_hump_class_names():
         "UUIDObfuscator", "Settings", "Chat",
     }
     assert all(i.kind == "class" for i in ids)
+
+
+def _write_graph(tmp_path: Path, nodes: list[dict]) -> Path:
+    p = tmp_path / "graph.json"
+    p.write_text(json.dumps({"nodes": nodes, "links": []}))
+    return p
+
+
+def test_loads_files_and_normalized_symbols(tmp_path):
+    p = _write_graph(tmp_path, [
+        {"label": "db.py", "norm_label": "db.py", "source_file": "app/core/db.py"},
+        {"label": "get_session_factory()", "norm_label": "get_session_factory()",
+         "source_file": "app/core/db.py"},
+        {"label": "RedisCacheBackend", "norm_label": "rediscachebackend",
+         "source_file": "app/core/cache/backends.py"},
+    ])
+    g = load_graph_symbols(p)
+    assert g.node_count == 3
+    assert "app/core/db.py" in g.files
+    assert "get_session_factory" in g.symbols
+    assert "rediscachebackend" in g.symbols
+
+
+def test_missing_graph_raises_filenotfound(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_graph_symbols(tmp_path / "absent.json")
+
+
+def test_graph_without_nodes_key_raises_valueerror(tmp_path):
+    p = tmp_path / "graph.json"
+    p.write_text(json.dumps({"foo": []}))
+    with pytest.raises(ValueError):
+        load_graph_symbols(p)
+
+
+def test_raw_extraction_graph_with_edges_key(tmp_path):
+    # `graphify extract --no-cluster` writes {"nodes": [...], "edges": [...]};
+    # clustered graphs use "links". The loader only reads nodes, so both
+    # shapes must load — this pins that contract.
+    p = tmp_path / "graph.json"
+    p.write_text(json.dumps({
+        "nodes": [{"label": "db.py", "source_file": "app/core/db.py"}],
+        "edges": [{"source": "a", "target": "b", "relation": "imports_from"}],
+    }))
+    g = load_graph_symbols(p)
+    assert g.node_count == 1
+    assert "app/core/db.py" in g.files

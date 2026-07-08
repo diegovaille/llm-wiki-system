@@ -27,6 +27,13 @@ class Identifier:
     kind: Literal["path", "function", "class"]
 
 
+@dataclass
+class GraphSymbols:
+    files: set[str] = field(default_factory=set)
+    symbols: set[str] = field(default_factory=set)
+    node_count: int = 0
+
+
 def extract_identifiers(body: str) -> list[Identifier]:
     prose = FENCED_BLOCK_RE.sub("", body)
     seen: dict[Identifier, None] = {}
@@ -39,3 +46,25 @@ def extract_identifiers(body: str) -> list[Identifier]:
         elif CLASS_RE.match(span) and span not in CLASS_STOPWORDS:
             seen.setdefault(Identifier(span, "class"))
     return list(seen)
+
+
+def load_graph_symbols(path: Path) -> GraphSymbols:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"graph is not valid JSON: {e}") from e
+    nodes = data.get("nodes")
+    if not isinstance(nodes, list):
+        raise ValueError("graph JSON has no 'nodes' list")
+    g = GraphSymbols(node_count=len(nodes))
+    for n in nodes:
+        src = n.get("source_file")
+        if src:
+            g.files.add(src)
+        label = (n.get("norm_label") or n.get("label") or "").lower()
+        label = label.lstrip(".").removesuffix("()")
+        if label:
+            g.symbols.add(label)
+    return g
