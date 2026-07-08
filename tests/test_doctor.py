@@ -106,6 +106,24 @@ def test_raw_extraction_graph_with_edges_key(tmp_path):
     assert "app/core/db.py" in g.files
 
 
+def test_graph_with_non_dict_top_level_raises_valueerror(tmp_path):
+    p = tmp_path / "graph.json"
+    p.write_text("[]")
+    with pytest.raises(ValueError):
+        load_graph_symbols(p)
+
+
+def test_graph_skips_non_dict_node_entries(tmp_path):
+    p = tmp_path / "graph.json"
+    p.write_text(json.dumps({"nodes": [
+        "garbage",
+        {"label": "db.py", "source_file": "app/core/db.py"},
+    ]}))
+    g = load_graph_symbols(p)
+    assert g.node_count == 2  # count reflects the raw list length
+    assert "app/core/db.py" in g.files
+
+
 PAGE = """---
 id: session-factory
 title: Session Factory
@@ -180,6 +198,28 @@ def test_doctor_path_suffix_matching(wiki_root, tmp_path):
     assert "api/backend/app/core/db.py" not in {f.identifier for f in report.findings}
 
 
+def test_doctor_no_finding_for_class_present_in_graph(wiki_root, tmp_path):
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(
+        PAGE.replace(
+            "Gone: `app/core/removed.py` and `vanished_helper()` and `GhostClass`.",
+            "Gone: `app/core/removed.py`.\nCache backed by `RedisCacheBackend`.",
+        )
+    )
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    graph = tmp_path / "graph.json"
+    graph.write_text(json.dumps({"nodes": [
+        {"label": "db.py", "source_file": "app/core/db.py"},
+        {"label": "get_session_factory()", "norm_label": "get_session_factory()",
+         "source_file": "app/core/db.py"},
+        {"label": "RedisCacheBackend", "norm_label": "rediscachebackend",
+         "source_file": "app/core/cache/backends.py"},
+    ], "links": []}))
+    report = run_doctor(wiki_root, "demo", graph)
+    identifiers = {f.identifier for f in report.findings}
+    assert "RedisCacheBackend" not in identifiers
+
+
 # ---------- CLI tests ----------
 
 
@@ -201,6 +241,20 @@ def test_cli_doctor_exit_2_with_findings(wiki_root, tmp_path):
 def test_cli_doctor_exit_4_on_missing_graph(wiki_root, tmp_path):
     _prepare(wiki_root, tmp_path)
     res = _cli(wiki_root, tmp_path, "doctor", "demo", "--graph", str(tmp_path / "nope.json"))
+    assert res.exit_code == 4, (res.stdout, res.stderr)
+    assert "unavailable" in res.stderr
+
+
+def test_cli_doctor_exit_4_on_missing_index(wiki_root, tmp_path):
+    # Page file exists but `wiki index` was never run, so there is no
+    # .wiki-index.json yet — load_index() must surface as exit 4, not a
+    # traceback.
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(PAGE)
+    graph = tmp_path / "graph.json"
+    graph.write_text(json.dumps({"nodes": [
+        {"label": "db.py", "source_file": "app/core/db.py"},
+    ], "links": []}))
+    res = _cli(wiki_root, tmp_path, "doctor", "demo", "--graph", str(graph))
     assert res.exit_code == 4, (res.stdout, res.stderr)
     assert "unavailable" in res.stderr
 

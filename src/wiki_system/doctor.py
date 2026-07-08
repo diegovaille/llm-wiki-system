@@ -55,11 +55,15 @@ def load_graph_symbols(path: Path) -> GraphSymbols:
         data = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         raise ValueError(f"graph is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError("graph JSON top level is not an object")
     nodes = data.get("nodes")
     if not isinstance(nodes, list):
         raise ValueError("graph JSON has no 'nodes' list")
     g = GraphSymbols(node_count=len(nodes))
     for n in nodes:
+        if not isinstance(n, dict):
+            continue
         src = n.get("source_file")
         if src:
             g.files.add(src)
