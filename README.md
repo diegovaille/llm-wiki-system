@@ -158,7 +158,7 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 `.claude/settings.local.json` is gitignored.
 
-## Current surface (v0.2.2)
+## Current surface (v0.2.3)
 
 **CLI commands shipped and tested:**
 
@@ -166,6 +166,7 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 - `wiki query <project> "<q>"` — lexical + link-graph retrieval. Exit 4 if the index is unavailable (distinct from exit 2 "no results"), so machine callers can tell "wiki has nothing on this topic" apart from "wiki isn't queryable."
 - `wiki index <project>` — rebuild the retrieval index + regenerate views
 - `wiki capture prepare|submit` — session-origin and staged-upgrade capture
+- `wiki doctor <project> --graph <graph.json>` — stale-refs report against an external AST code graph, exit 0 clean / 2 findings / 4 input unavailable
 - `wiki promote <project> <staging-path>` — dry-run or `--apply` a proposed staged file
 - `wiki review <project>` — deterministic listing of the staging queue
 - `wiki sync <project> [--path <subtree>] [--force]` — register project docs matching `source_globs` as `state: raw` staged files. Manual / operator-driven; hook-driven triggers remain deferred. Dedupes against both raw staged files and proposed files upgraded from them (so `sync → capture → sync` cannot produce duplicates).
@@ -183,7 +184,7 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 - Manifest-aware "already promoted" dedupe for `--all` (questions whose pages were promoted and archived still re-emit unless the user deletes the seed line or runs `bootstrap resolve --as noop`) (v0.2.4)
 - Hook-driven `wiki sync` (post-spec, post-commit triggers) (v0.2)
-- `wiki blame`, `wiki export-site`, `wiki status` (v0.2.x)
+- `wiki blame`, `wiki export-site` (v0.2.x)
 - Direct-API execution mode (no Claude Code session required) (v0.2)
 - Codex adapter (v0.3, architecture already set up for it)
 - Embeddings / vector retrieval (explicitly rejected — inspectability wins)
