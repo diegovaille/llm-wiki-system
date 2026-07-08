@@ -95,6 +95,7 @@ def _path_in_graph(span: str, files: set[str]) -> bool:
 def run_doctor(wiki_root: Path, project: str, graph_path: Path) -> DoctorReport:
     idx = load_index(wiki_root, project)
     g = load_graph_symbols(graph_path)
+    roots = {f.split("/", 1)[0] for f in g.files if "/" in f}
     findings: list[Finding] = []
     checked = 0
     for page in idx.pages:
@@ -102,7 +103,11 @@ def run_doctor(wiki_root: Path, project: str, graph_path: Path) -> DoctorReport:
             checked += 1
             if ident.kind == "path":
                 if not _path_in_graph(ident.text, g.files):
-                    findings.append(Finding(page.id, ident.text, ident.kind, "high"))
+                    segments = ident.text.split("/")
+                    confidence = "high" if roots & set(segments) else "advisory"
+                    findings.append(
+                        Finding(page.id, ident.text, ident.kind, confidence)
+                    )
             else:
                 name = ident.text.lower().removesuffix("()")
                 if name not in g.symbols:

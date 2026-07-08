@@ -150,6 +150,26 @@ def test_doctor_reports_only_missing_identifiers(wiki_root, tmp_path):
     }
 
 
+def test_doctor_downgrades_paths_outside_graph_roots(wiki_root, tmp_path):
+    graph = _prepare(wiki_root, tmp_path)
+    page = PAGE.replace(
+        "Gone: `app/core/removed.py` and `vanished_helper()` and `GhostClass`.",
+        "Gone: `app/core/removed.py`, `tests/unit/test_x.py`, "
+        "`scripts/seed_data.py`, `seed_data.py`.",
+    )
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(page)
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    report = run_doctor(wiki_root, "demo", graph)
+    conf = {f.identifier: f.confidence for f in report.findings if f.kind == "path"}
+    assert conf == {
+        "app/core/removed.py": "high",       # under a covered root -> real staleness signal
+        "tests/unit/test_x.py": "advisory",  # ungraphed tree
+        "scripts/seed_data.py": "advisory",  # ungraphed tree
+        "seed_data.py": "advisory",          # bare filename, ambiguous
+    }
+
+
 def test_doctor_path_suffix_matching(wiki_root, tmp_path):
     graph = _prepare(wiki_root, tmp_path)
     page = PAGE.replace("app/core/db.py", "api/backend/app/core/db.py")
