@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from wiki_system.doctor import Identifier, GraphSymbols, extract_identifiers, load_graph_symbols
+from wiki_system.doctor import Identifier, GraphSymbols, extract_identifiers, load_graph_symbols, run_doctor
+from wiki_system.index import build_index, save_index
 
 
 def test_extracts_py_paths_functions_and_classes():
@@ -100,3 +101,57 @@ def test_raw_extraction_graph_with_edges_key(tmp_path):
     g = load_graph_symbols(p)
     assert g.node_count == 1
     assert "app/core/db.py" in g.files
+
+
+PAGE = """---
+id: session-factory
+title: Session Factory
+summary: How sessions are made.
+type: pattern
+project: demo
+domains: [db]
+status: active
+aliases: []
+sources: ["session:2026-07-08-x"]
+related: []
+updated_at: 2026-07-08
+confidence: high
+---
+Factory in `app/core/db.py`, via `get_session_factory()`.
+Gone: `app/core/removed.py` and `vanished_helper()` and `GhostClass`.
+"""
+
+
+def _prepare(wiki_root, tmp_path):
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(PAGE)
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    graph = tmp_path / "graph.json"
+    graph.write_text(json.dumps({"nodes": [
+        {"label": "db.py", "source_file": "app/core/db.py"},
+        {"label": "get_session_factory()", "norm_label": "get_session_factory()",
+         "source_file": "app/core/db.py"},
+    ], "links": []}))
+    return graph
+
+
+def test_doctor_reports_only_missing_identifiers(wiki_root, tmp_path):
+    graph = _prepare(wiki_root, tmp_path)
+    report = run_doctor(wiki_root, "demo", graph)
+    assert report.pages_checked == 1
+    missing = {(f.identifier, f.confidence) for f in report.findings}
+    assert missing == {
+        ("app/core/removed.py", "high"),
+        ("vanished_helper()", "advisory"),
+        ("GhostClass", "advisory"),
+    }
+
+
+def test_doctor_path_suffix_matching(wiki_root, tmp_path):
+    graph = _prepare(wiki_root, tmp_path)
+    page = PAGE.replace("app/core/db.py", "api/backend/app/core/db.py")
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(page)
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    report = run_doctor(wiki_root, "demo", graph)
+    assert "api/backend/app/core/db.py" not in {f.identifier for f in report.findings}

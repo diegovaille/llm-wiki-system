@@ -68,3 +68,50 @@ def load_graph_symbols(path: Path) -> GraphSymbols:
         if label:
             g.symbols.add(label)
     return g
+
+
+@dataclass(frozen=True)
+class Finding:
+    page_id: str
+    identifier: str
+    kind: str
+    confidence: Literal["high", "advisory"]
+
+
+@dataclass
+class DoctorReport:
+    project: str
+    pages_checked: int
+    identifiers_checked: int
+    findings: list[Finding]
+
+
+def _path_in_graph(span: str, files: set[str]) -> bool:
+    if span in files:
+        return True
+    return any(f.endswith("/" + span) or span.endswith("/" + f) for f in files)
+
+
+def run_doctor(wiki_root: Path, project: str, graph_path: Path) -> DoctorReport:
+    idx = load_index(wiki_root, project)
+    g = load_graph_symbols(graph_path)
+    findings: list[Finding] = []
+    checked = 0
+    for page in idx.pages:
+        for ident in extract_identifiers(page.body):
+            checked += 1
+            if ident.kind == "path":
+                if not _path_in_graph(ident.text, g.files):
+                    findings.append(Finding(page.id, ident.text, ident.kind, "high"))
+            else:
+                name = ident.text.lower().removesuffix("()")
+                if name not in g.symbols:
+                    findings.append(
+                        Finding(page.id, ident.text, ident.kind, "advisory")
+                    )
+    return DoctorReport(
+        project=project,
+        pages_checked=len(idx.pages),
+        identifiers_checked=checked,
+        findings=findings,
+    )
