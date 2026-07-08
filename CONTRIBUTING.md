@@ -69,6 +69,15 @@ Scopes roughly correspond to subsystems: `cli`, `bootstrap`, `sync`, `capture`, 
 - Update `README.md` "Current surface" if you add or remove a shipped command.
 - Re-run `.venv/bin/wiki --no-json init` locally if you change adapter templates, so your local symlinks reflect the new content.
 
+## Releases
+
+- Bump `version` in `pyproject.toml`, refresh `uv.lock` (`uv lock`), move the
+  `[Unreleased]` CHANGELOG entries under a dated `[x.y.z]` heading, and update
+  the README "Current surface" version.
+- Tag the release commit on `main` with an annotated tag and push it:
+  `git tag -a vx.y.z -m "vx.y.z — one-line summary" && git push origin vx.y.z`.
+  Tags exist from v0.2.2 onward.
+
 ## Design decisions that are firm
 
 These aren't up for re-litigation without a very good reason:
