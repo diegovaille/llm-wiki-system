@@ -87,6 +87,7 @@ See [`adapters/claude/install/install.md`](adapters/claude/install/install.md) f
 | `wiki query <project> "<q>"` | Lexical + link-graph ranked retrieval. No embeddings, no guesses. | Answer a question before falling back to `docs/`. |
 | `wiki index <project>` | Rebuild the JSON retrieval index + regenerate `views/index.md`, `views/by-type.md`, `views/by-domain.md`. | After hand-editing config or pulling new pages. |
 | `wiki capture prepare` / `submit` | Two-step protocol: prepare emits a prompt package, submit validates a structured proposal and writes a `state: proposed` staged file. | Session-origin captures (via `/wiki-capture`) and upgrading raw staged files. |
+| `wiki doctor <project> --graph <graph.json>` | Report code identifiers in canonical pages that no longer exist in an external code graph (stale references). Exit 0 clean / 2 findings / 4 input unavailable. | Detect and flag obsolete identifier references before or after code refactoring. |
 | `wiki sync <project>` | Register project docs matching `source_globs` as `state: raw` staged files for later distillation through the capture loop. Scoped by `--path` subtree; `--force` re-stages. | Doc-led wiki growth: "compile these existing markdown files into pages." |
 | `wiki bootstrap prepare` / `submit` / `resolve` | Question-led wiki growth from `queries/seed-questions.md`. `prepare` builds a prompt package (single-question or `--all` loop); `submit` validates a proposal and writes either a staged file or a durable noop marker; `resolve --as noop` is a shortcut for known-noop questions. | Distill answers for specific questions; grow a wiki from a seed-question list. |
 | `wiki promote <project> <path>` | The ONLY path from staging to `pages/`. Dry-run first (diff on stderr), `--apply` to write. | After `/wiki-capture` or reviewing staging by hand. |
@@ -180,10 +181,9 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 **Still deferred:**
 
-- Manifest-aware "already promoted" dedupe for `--all` (questions whose pages were promoted and archived still re-emit unless the user deletes the seed line or runs `bootstrap resolve --as noop`) (v0.2.3)
+- Manifest-aware "already promoted" dedupe for `--all` (questions whose pages were promoted and archived still re-emit unless the user deletes the seed line or runs `bootstrap resolve --as noop`) (v0.2.4)
 - Hook-driven `wiki sync` (post-spec, post-commit triggers) (v0.2)
-- `wiki blame`, `wiki export-site` (v0.2.x)
-- `wiki doctor` / `wiki status` health check command (v0.2.x)
+- `wiki blame`, `wiki export-site`, `wiki status` (v0.2.x)
 - Direct-API execution mode (no Claude Code session required) (v0.2)
 - Codex adapter (v0.3, architecture already set up for it)
 - Embeddings / vector retrieval (explicitly rejected — inspectability wins)
