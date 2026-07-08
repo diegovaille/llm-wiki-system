@@ -2,7 +2,10 @@ import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from tests.test_cli import _setup_config
+from wiki_system.cli import main
 from wiki_system.doctor import Identifier, GraphSymbols, extract_identifiers, load_graph_symbols, run_doctor
 from wiki_system.index import build_index, save_index
 
@@ -155,3 +158,38 @@ def test_doctor_path_suffix_matching(wiki_root, tmp_path):
     save_index(wiki_root, "demo", idx)
     report = run_doctor(wiki_root, "demo", graph)
     assert "api/backend/app/core/db.py" not in {f.identifier for f in report.findings}
+
+
+# ---------- CLI tests ----------
+
+
+def _cli(wiki_root, tmp_path, *args):
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    # click 8.3 always separates stdout and stderr; no mix_stderr flag.
+    return CliRunner().invoke(main, ["--config", str(cfg_path), *args])
+
+
+def test_cli_doctor_exit_2_with_findings(wiki_root, tmp_path):
+    graph = _prepare(wiki_root, tmp_path)
+    res = _cli(wiki_root, tmp_path, "doctor", "demo", "--graph", str(graph))
+    assert res.exit_code == 2, (res.stdout, res.stderr)
+    payload = json.loads(res.stdout)
+    assert payload["pages_checked"] == 1
+    assert any(f["identifier"] == "app/core/removed.py" for f in payload["findings"])
+
+
+def test_cli_doctor_exit_4_on_missing_graph(wiki_root, tmp_path):
+    _prepare(wiki_root, tmp_path)
+    res = _cli(wiki_root, tmp_path, "doctor", "demo", "--graph", str(tmp_path / "nope.json"))
+    assert res.exit_code == 4, (res.stdout, res.stderr)
+    assert "unavailable" in res.stderr
+
+
+def test_cli_doctor_exit_0_when_clean(wiki_root, tmp_path):
+    graph = _prepare(wiki_root, tmp_path)
+    clean = "\n".join(l for l in PAGE.splitlines() if "Gone:" not in l) + "\n"
+    (wiki_root / "demo" / "pages" / "session-factory.md").write_text(clean)
+    idx = build_index(wiki_root, "demo")
+    save_index(wiki_root, "demo", idx)
+    res = _cli(wiki_root, tmp_path, "doctor", "demo", "--graph", str(graph))
+    assert res.exit_code == 0, (res.stdout, res.stderr)

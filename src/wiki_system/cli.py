@@ -21,6 +21,7 @@ from wiki_system.capture import (
     submit_capture,
 )
 from wiki_system.config import WikiConfig, load_config
+from wiki_system.doctor import run_doctor
 from wiki_system.index import build_index, render_views, save_index
 from wiki_system.init import run_init
 from wiki_system.promote import PromoteRejection, promote as promote_op
@@ -173,6 +174,62 @@ def index_cmd(ctx: click.Context, project: str, strict: bool) -> None:
         payload,
         lambda p: f"indexed {p['pages_indexed']} page(s), {p['warnings_count']} warning(s)",
     )
+
+
+# ---------- doctor ----------
+
+
+@main.command()
+@click.argument("project")
+@click.option(
+    "--graph",
+    "graph_path",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Path to an external code graph (graphify graph.json).",
+)
+@click.pass_context
+def doctor(ctx: click.Context, project: str, graph_path: Path) -> None:
+    """Report page identifiers that no longer exist in the code graph."""
+    cfg = _load_config_or_die(ctx)
+    _get_project_or_die(ctx, cfg, project)
+    wiki_root = cfg.wiki_root_path()
+    try:
+        report = run_doctor(wiki_root, project, graph_path)
+    except FileNotFoundError as e:
+        click.echo(f"doctor input unavailable: {e}", err=True)
+        ctx.exit(4)
+    except ValueError as e:
+        click.echo(f"doctor input unreadable: {e}", err=True)
+        ctx.exit(4)
+    payload = {
+        "project": report.project,
+        "pages_checked": report.pages_checked,
+        "identifiers_checked": report.identifiers_checked,
+        "findings": [
+            {
+                "page_id": f.page_id,
+                "identifier": f.identifier,
+                "kind": f.kind,
+                "confidence": f.confidence,
+            }
+            for f in report.findings
+        ],
+    }
+
+    def _text(p):
+        if not p["findings"]:
+            return f"clean: {p['identifiers_checked']} identifier(s) across {p['pages_checked']} page(s)"
+        lines = [f"{len(p['findings'])} stale reference(s):"]
+        for f in p["findings"]:
+            lines.append(
+                f"  [{f['confidence']}] {f['page_id']}: {f['identifier']} ({f['kind']})"
+            )
+        return "\n".join(lines)
+
+    _emit(ctx, payload, _text)
+    if report.findings:
+        ctx.exit(2)
 
 
 # ---------- capture ----------
