@@ -158,7 +158,7 @@ cp .claude/settings.local.example.json .claude/settings.local.json
 
 `.claude/settings.local.json` is gitignored.
 
-## Current surface (v0.2.3)
+## Current surface (v0.3.0)
 
 **CLI commands shipped and tested:**
 

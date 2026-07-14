@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-14
+
+### Added
+- Per-project canonical domain allowlist: optional `domains = [...]` on a
+  `[[projects]]` entry in `wiki.config.toml`. When set, `wiki index` reports
+  a warning for every page tagged with a domain outside the list (payload
+  gains `warnings`), and `wiki index --strict` exits 1. Empty/absent list
+  preserves legacy free-form behavior.
+
 ## [0.2.3] - 2026-07-08
 
 ### Added

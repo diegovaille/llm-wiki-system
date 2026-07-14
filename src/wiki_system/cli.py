@@ -168,12 +168,26 @@ def index_cmd(ctx: click.Context, project: str, strict: bool) -> None:
     idx = build_index(wiki_root, project)
     save_index(wiki_root, project, idx)
     render_views(wiki_root, project, idx, repo_path=project_cfg.repo_path)
-    payload = {"pages_indexed": len(idx.pages), "warnings_count": 0}
-    _emit(
-        ctx,
-        payload,
-        lambda p: f"indexed {p['pages_indexed']} page(s), {p['warnings_count']} warning(s)",
-    )
+    warnings: list[str] = []
+    if project_cfg.domains:
+        allowed = set(project_cfg.domains)
+        for page in idx.pages:
+            unknown = [d for d in page.domains if d not in allowed]
+            if unknown:
+                warnings.append(
+                    f"{page.id}: non-canonical domain(s) {unknown}; "
+                    f"allowed: {sorted(allowed)}"
+                )
+    payload = {"pages_indexed": len(idx.pages), "warnings_count": len(warnings), "warnings": warnings}
+
+    def _text(p: dict) -> str:
+        lines = [f"indexed {p['pages_indexed']} page(s), {p['warnings_count']} warning(s)"]
+        lines.extend(f"  {w}" for w in p["warnings"])
+        return "\n".join(lines)
+
+    _emit(ctx, payload, _text)
+    if strict and warnings:
+        ctx.exit(1)
 
 
 # ---------- doctor ----------

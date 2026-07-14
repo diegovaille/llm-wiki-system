@@ -41,6 +41,10 @@ class ProjectConfig(BaseModel):
     name: str
     repo_path: str
     source_globs: list[str] = Field(default_factory=list)
+    # Canonical domain allowlist. Empty = any domain accepted (legacy mode).
+    # When set, `wiki index` warns on pages tagged outside the list and
+    # `wiki index --strict` fails, so captures can't invent new domains.
+    domains: list[str] = Field(default_factory=list)
 
 
 class RetrievalConfig(BaseModel):
