@@ -432,3 +432,87 @@ def test_cli_review_empty_exit_3(wiki_root: Path, tmp_path: Path):
     # stdout still valid JSON (empty list)
     payload = json.loads(r.stdout)
     assert payload == []
+
+
+def _setup_config_with_domains(
+    tmp_path: Path, wiki_root: Path, repo: Path, domains: list[str]
+) -> Path:
+    repo.mkdir(parents=True, exist_ok=True)
+    cfg = tmp_path / "wiki.config.toml"
+    cfg.write_text(
+        f"""
+[wiki]
+root = "{wiki_root}"
+
+[execution]
+mode = "agent"
+
+[execution.agent]
+runtime = "claude-code"
+model_hint = "opus"
+
+[[projects]]
+name = "demo"
+repo_path = "{repo}"
+source_globs = ["docs/**/*.md"]
+domains = {domains!r}
+"""
+    )
+    return cfg
+
+
+def test_cli_index_warns_on_non_canonical_domain(wiki_root: Path, tmp_path: Path):
+    cfg_path = _setup_config_with_domains(
+        tmp_path, wiki_root, tmp_path / "repo", ["backend"]
+    )
+    _seed(wiki_root)  # seed page is tagged domains=["pipeline"]
+    runner = _runner()
+    r = runner.invoke(main, ["--config", str(cfg_path), "index", "demo"])
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    payload = json.loads(r.stdout)
+    assert payload["warnings_count"] == 1
+    assert "demo-foo" in payload["warnings"][0]
+    assert "pipeline" in payload["warnings"][0]
+
+
+def test_cli_index_strict_fails_on_non_canonical_domain(
+    wiki_root: Path, tmp_path: Path
+):
+    cfg_path = _setup_config_with_domains(
+        tmp_path, wiki_root, tmp_path / "repo", ["backend"]
+    )
+    _seed(wiki_root)
+    runner = _runner()
+    r = runner.invoke(
+        main, ["--config", str(cfg_path), "index", "demo", "--strict"]
+    )
+    assert r.exit_code == 1, (r.stdout, r.stderr)
+
+
+def test_cli_index_strict_passes_when_domains_canonical(
+    wiki_root: Path, tmp_path: Path
+):
+    cfg_path = _setup_config_with_domains(
+        tmp_path, wiki_root, tmp_path / "repo", ["pipeline", "backend"]
+    )
+    _seed(wiki_root)
+    runner = _runner()
+    r = runner.invoke(
+        main, ["--config", str(cfg_path), "index", "demo", "--strict"]
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    assert json.loads(r.stdout)["warnings_count"] == 0
+
+
+def test_cli_index_no_allowlist_keeps_free_form_domains(
+    wiki_root: Path, tmp_path: Path
+):
+    """Legacy mode: projects without a domains allowlist never warn."""
+    cfg_path = _setup_config(tmp_path, wiki_root, tmp_path / "repo")
+    _seed(wiki_root)
+    runner = _runner()
+    r = runner.invoke(
+        main, ["--config", str(cfg_path), "index", "demo", "--strict"]
+    )
+    assert r.exit_code == 0, (r.stdout, r.stderr)
+    assert json.loads(r.stdout)["warnings_count"] == 0

@@ -985,3 +985,16 @@ No tests call the Anthropic API. Generative ops are tested by fixture proposals,
 - **Under-capture feels empty** — the under-capture bias may leave the wiki feeling sparse early on. Mitigation: hand-written seed pages establish usefulness from day one; capture grows organically.
 - **Adapter drift** — the temptation to put "just a little logic" in the slash commands is real. Mitigation: the prepare/submit protocol makes drift architecturally visible, and the command contracts table is the enforcement surface.
 - **Retrieval quality** — deterministic lexical + graph ranking may not hit the 8/10 bar. Mitigation: if it misses, tune ranking weights and curated edges before reaching for embeddings. Embeddings are a v0.3+ conversation only if real use demands it.
+
+**v0.3.0 addendum — per-project canonical domain allowlist:**
+
+`domains = [...]` on a `[[projects]]` entry in `wiki.config.toml` declares the
+project's canonical domain taxonomy. Enforcement happens at index time only:
+`wiki index` compares every page's `domains:` frontmatter against the
+allowlist, includes any violations in the payload (`warnings`,
+`warnings_count`), and `--strict` exits 1 on the first non-empty warning set.
+Capture/promote are deliberately NOT gated — staged pages may carry candidate
+domains; the strict index run (CI or pre-promote hook) is the contract seam.
+An absent or empty list disables the check entirely, preserving pre-0.3.0
+free-form tagging. Domains remain a retrieval field (weight 3.0); the
+allowlist changes vocabulary discipline, not scoring.

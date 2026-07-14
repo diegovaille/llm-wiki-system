@@ -109,3 +109,43 @@ source_globs = []
     from pydantic import ValidationError
     with pytest.raises(ValidationError, match="unknown_field"):
         load_config(cfg_path)
+
+
+def test_project_domains_allowlist_parses(tmp_path: Path):
+    cfg_path = tmp_path / "wiki.config.toml"
+    cfg_path.write_text(
+        """
+[wiki]
+root = "~/Git/wiki"
+[execution]
+mode = "agent"
+[execution.agent]
+runtime = "claude-code"
+model_hint = "opus"
+[[projects]]
+name = "demo"
+repo_path = "~/Git/demo"
+domains = ["backend", "identity"]
+"""
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.projects[0].domains == ["backend", "identity"]
+
+
+def test_project_domains_defaults_to_empty(tmp_path: Path):
+    cfg_path = tmp_path / "wiki.config.toml"
+    cfg_path.write_text(
+        """
+[wiki]
+root = "~/Git/wiki"
+[execution]
+mode = "agent"
+[execution.agent]
+runtime = "claude-code"
+model_hint = "opus"
+[[projects]]
+name = "demo"
+repo_path = "~/Git/demo"
+"""
+    )
+    assert load_config(cfg_path).projects[0].domains == []
