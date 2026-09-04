@@ -1,7 +1,18 @@
-"""Deterministic lexical + link-graph retrieval."""
+"""Deterministic lexical + link-graph retrieval.
+
+Scoring is inverse-document-frequency weighted token overlap over a fixed
+field set, so a term that appears on most pages ("user", "district") carries
+almost no weight and a rare one carries a lot. Function words are stripped
+from the question before scoring; without that, pages carrying long lists of
+sentence-shaped aliases win any sentence-shaped question on "a", "how", "so"
+and "they" alone (measured 2026-08-31: 1 of 15 newcomer questions hit the
+right page in the top three; 10 to 11 of 15 after IDF and stopwords).
+"""
 from __future__ import annotations
 
+import math
 import re
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -11,6 +22,40 @@ from wiki_system.index import PageMeta, load_index
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+# Pages in these states never score and never arrive through graph expansion.
+UNRETRIEVABLE_STATUSES = frozenset({"superseded"})
+
+# Stripped from the question only. Page text keeps every token, which is
+# equivalent for scoring (a stripped query term can never match) and saves a
+# reindex when the list changes. The list was fitted against real prompts
+# rather than taken from a generic English stoplist: it also drops a few
+# content-shaped verbs ("add", "check", "set") that turned out to match
+# nothing useful in a corpus about settings, drift checks and adding users.
+STOPWORDS = frozenset(
+    """
+    a an and are as at be been but by can could did do does for from get got had has have
+    how i if in into is it its just like make made may me might more most must my need not
+    now of on once one only or other our out over own re same should since so some such than
+    that the their them then there these they this those to too under until up use used using
+    very was way we were what when where which while who why will with would you your about
+    add adds after all also any because before both check doing done each few give go
+    going help here new no off see set take tell think want yes
+    """.split()
+)
+
+# Scored fields, in the order reasons are reported. Weights come from
+# `[retrieval] field_weights`; a field missing from the config takes the
+# default here.
+DEFAULT_FIELD_WEIGHTS = {
+    "title": 5.0,
+    "aliases": 4.0,
+    "domains": 3.0,
+    "type": 2.0,
+    "headings": 2.0,
+    "body": 1.0,
+    "sources": 1.0,
+}
 
 
 @dataclass
@@ -30,61 +75,68 @@ def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in TOKEN_RE.findall(text)]
 
 
+def query_tokens(question: str) -> set[str]:
+    """The tokens of a question that take part in scoring."""
+    return {t for t in _tokenize(question) if t not in STOPWORDS}
+
+
+def _field_tokens(page: PageMeta) -> dict[str, set[str]]:
+    def many(items: list[str]) -> set[str]:
+        out: set[str] = set()
+        for item in items:
+            out.update(_tokenize(item))
+        return out
+
+    return {
+        "title": set(_tokenize(page.title)),
+        "aliases": many(page.aliases),
+        "domains": many(page.domains),
+        "type": set(_tokenize(page.type)),
+        "headings": many(page.headings),
+        "body": set(_tokenize(page.body)),
+        "sources": many(page.sources),
+    }
+
+
+def _document_frequency(docs: list[dict[str, set[str]]]) -> Counter[str]:
+    """How many pages carry each token in any scored field."""
+    df: Counter[str] = Counter()
+    for fields in docs:
+        df.update(set().union(*fields.values()))
+    return df
+
+
+def _idf(term: str, df: Counter[str], n: int) -> float:
+    """Inverse document frequency, BM25-shaped so it stays positive on a
+    corpus of one page and falls to ~0 for a term on every page."""
+    d = df.get(term, 0)
+    return math.log(1.0 + (n - d + 0.5) / (d + 0.5))
+
+
 def _score_lexical(
-    page: PageMeta, q_tokens: set[str], cfg: RetrievalConfig
+    fields: dict[str, set[str]],
+    q_tokens: set[str],
+    weights: dict[str, float],
+    df: Counter[str],
+    n: int,
 ) -> tuple[float, list[str], list[str]]:
     score = 0.0
-    fields: list[str] = []
+    matched: list[str] = []
     reasons: list[str] = []
-
-    title_tokens = set(_tokenize(page.title))
-    if q_tokens & title_tokens:
-        overlap = len(q_tokens & title_tokens)
-        score += cfg.field_weights.get("title", 5.0) * overlap
-        fields.append("title")
-        reasons.append(f"title match: {sorted(q_tokens & title_tokens)}")
-
-    alias_tokens = set()
-    for a in page.aliases:
-        alias_tokens.update(_tokenize(a))
-    if q_tokens & alias_tokens:
-        overlap = len(q_tokens & alias_tokens)
-        score += cfg.field_weights.get("aliases", 4.0) * overlap
-        fields.append("aliases")
-        reasons.append(f"alias match: {sorted(q_tokens & alias_tokens)}")
-
-    domain_tokens = set()
-    for d in page.domains:
-        domain_tokens.update(_tokenize(d))
-    if q_tokens & domain_tokens:
-        overlap = len(q_tokens & domain_tokens)
-        score += cfg.field_weights.get("domains", 3.0) * overlap
-        fields.append("domains")
-        reasons.append(f"domain match: {sorted(q_tokens & domain_tokens)}")
-
-    type_tokens = set(_tokenize(page.type))
-    if q_tokens & type_tokens:
-        score += cfg.field_weights.get("type", 2.0)
-        fields.append("type")
-        reasons.append(f"type match: {page.type}")
-
-    heading_tokens = set()
-    for h in page.headings:
-        heading_tokens.update(_tokenize(h))
-    if q_tokens & heading_tokens:
-        overlap = len(q_tokens & heading_tokens)
-        score += cfg.field_weights.get("headings", 2.0) * overlap
-        fields.append("headings")
-        reasons.append("heading match")
-
-    body_tokens = set(_tokenize(page.body))
-    body_overlap = q_tokens & body_tokens
-    if body_overlap:
-        score += cfg.field_weights.get("body", 1.0) * len(body_overlap)
-        fields.append("body")
-        reasons.append(f"body match: {sorted(body_overlap)}")
-
-    return score, fields, reasons
+    for name, default in DEFAULT_FIELD_WEIGHTS.items():
+        hit = q_tokens & fields[name]
+        if not hit:
+            continue
+        weight = weights.get(name, default)
+        if name == "type":
+            # One token, scored once: a page is of one type.
+            contribution = weight * _idf(next(iter(hit)), df, n)
+        else:
+            contribution = weight * sum(_idf(t, df, n) for t in hit)
+        score += contribution
+        matched.append(name)
+        reasons.append(f"{name} match: {sorted(hit)}")
+    return score, matched, reasons
 
 
 def _snippet_for(page: PageMeta, q_tokens: set[str]) -> str:
@@ -108,19 +160,26 @@ def run_query(
     limit: int = 5,
 ) -> list[QueryResult]:
     idx = load_index(wiki_root, project)
-    q_tokens = set(_tokenize(question))
+    pages = [p for p in idx.pages if p.status not in UNRETRIEVABLE_STATUSES]
+    q_tokens = query_tokens(question)
+    if not pages or not q_tokens:
+        return []
+
+    docs = [_field_tokens(p) for p in pages]
+    df = _document_frequency(docs)
+    n = len(pages)
 
     # Phase 1: lexical scoring
     lex_hits: dict[str, tuple[float, list[str], list[str]]] = {}
-    for page in idx.pages:
-        s, fields, reasons = _score_lexical(page, q_tokens, cfg)
+    for page, fields in zip(pages, docs):
+        s, matched, reasons = _score_lexical(fields, q_tokens, cfg.field_weights, df, n)
         if s > 0:
-            lex_hits[page.id] = (s, fields, reasons)
+            lex_hits[page.id] = (s, matched, reasons)
 
     results: dict[str, QueryResult] = {}
-    id_to_page = {p.id: p for p in idx.pages}
+    id_to_page = {p.id: p for p in pages}
 
-    for pid, (score, fields, reasons) in lex_hits.items():
+    for pid, (score, matched, reasons) in lex_hits.items():
         p = id_to_page[pid]
         results[pid] = QueryResult(
             id=p.id,
@@ -128,7 +187,7 @@ def run_query(
             summary=p.summary,
             path=p.path,
             score=score,
-            matched_fields=fields,
+            matched_fields=matched,
             match_source="lexical",
             reasons=list(reasons),
             snippet=_snippet_for(p, q_tokens),
@@ -137,7 +196,7 @@ def run_query(
     # Phase 2: 1-hop graph expansion through curated edges
     curated_edges = [e for e in idx.edges if e.kind == "curated"]
     for e in curated_edges:
-        if e.src in lex_hits and e.dst not in results:
+        if e.src in lex_hits and e.dst not in results and e.dst in id_to_page:
             p = id_to_page[e.dst]
             base = lex_hits[e.src][0]
             results[p.id] = QueryResult(
@@ -157,7 +216,7 @@ def run_query(
         e for e in idx.edges if e.kind in ("inferred_backlink", "inferred_source")
     ]
     for e in inferred_edges:
-        if e.src in lex_hits and e.dst not in results:
+        if e.src in lex_hits and e.dst not in results and e.dst in id_to_page:
             p = id_to_page[e.dst]
             base = lex_hits[e.src][0]
             results[p.id] = QueryResult(
@@ -172,9 +231,17 @@ def run_query(
                 snippet=_snippet_for(p, q_tokens),
             )
 
-    # Phase 3: recency tiebreaker (very weak)
+    # Phase 3: direct matches first, then graph neighbors; within each class by
+    # score, then recency (very weak), then id. A page the question never
+    # mentioned must not outrank the page that led to it — with IDF-scaled
+    # scores the additive edge weight would do exactly that on small corpora.
     ranked = sorted(
         results.values(),
-        key=lambda r: (-r.score, -id_to_page[r.id].updated_at.toordinal(), r.id),
+        key=lambda r: (
+            r.match_source != "lexical",
+            -r.score,
+            -id_to_page[r.id].updated_at.toordinal(),
+            r.id,
+        ),
     )
     return ranked[:limit]

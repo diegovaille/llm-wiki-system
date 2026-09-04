@@ -57,6 +57,7 @@ class RetrievalConfig(BaseModel):
             "type": 2.0,
             "headings": 2.0,
             "body": 1.0,
+            "sources": 1.0,
         }
     )
     curated_edge_weight: float = 3.0

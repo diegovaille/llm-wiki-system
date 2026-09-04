@@ -126,7 +126,7 @@ confidence: high                  # high | medium | low
 
 ## Retrieval model
 
-Lexical scoring over `title`, `aliases`, `domains`, `type`, `headings`, and `body`, weighted per `[retrieval] field_weights` in `wiki.config.toml`. After lexical hits settle, a 1-hop graph expansion pulls in:
+Lexical scoring over `title`, `aliases`, `domains`, `type`, `headings`, `body`, and `sources`, weighted per `[retrieval] field_weights` in `wiki.config.toml`. Each matched token is discounted by inverse document frequency, so a term found on most pages counts for almost nothing and a rare one counts for a lot; function words are stripped from the question before scoring. Pages with `status: superseded` never score. After lexical hits settle, a 1-hop graph expansion pulls in:
 
 - **Curated edges** from `related:` lists on the matched pages
 - **Inferred backlinks** (reverse of curated)

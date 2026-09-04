@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-03
+
+### Changed
+- `wiki query` scoring is now inverse-document-frequency weighted and strips
+  stopwords from the question. Measured on a 115-page corpus: newcomer-phrased
+  questions went from 1 of 15 to 10-11 of 15 in the top three, expert-phrased
+  questions from 6 of 7 to 7 of 7, and the four alias-heavy pages that used to
+  win every sentence-shaped question on "a", "how", "so", "they" fell from
+  half of all top-three slots to a sixth. Field weights and the tokenizer are
+  unchanged.
+- `sources:` is now a scored field (default weight 1.0, configurable through
+  `field_weights.sources`). A ticket id that appears only in `sources:` is
+  retrievable for the first time.
+- Pages with `status: superseded` are excluded from scoring and from graph
+  expansion.
+
 ## [0.3.0] - 2026-07-14
 
 ### Added

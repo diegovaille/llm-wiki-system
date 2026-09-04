@@ -366,9 +366,12 @@ Deterministic retrieval. The stable contract that all adapters consume.
 2. `domains:` and `type:` matches from frontmatter (mid weight)
 3. Heading-level matches within page bodies
 4. Body token matches (lowest lexical weight)
+4a. `sources:` token matches (same weight as body) — the only field where a ticket id such as `CLA-1810` lives when the body does not name it
 5. 1-hop expansion through curated `related:` edges (curated edge weight)
 6. Inferred edges: backlinks and `sources:` overlap (inferred edge weight, distinct class)
 7. Recency as **weak tiebreaker only** — never outranks a more canonical page
+
+Every lexical match is weighted by inverse document frequency over the union of the scored fields, and stopwords are stripped from the question (never from pages). Both were added in 0.4.0 after measuring that sentence-shaped aliases scored per token at weight 4.0 made alias-heavy pages win any sentence-shaped question on function words alone. Superseded pages are excluded before scoring and from graph expansion.
 
 There is no `tags:` field. Ranking signals reference only fields that exist in the schema (`domains:`, `type:`, `aliases:`, etc.).
 

@@ -44,7 +44,7 @@ source_globs = ["docs/**/*.md"]
 [retrieval]
 # Per-field weights used by `wiki query`'s lexical scorer. Higher = more
 # important. Defaults shown; override selectively.
-field_weights = { title = 5.0, aliases = 4.0, domains = 3.0, type = 2.0, headings = 2.0, body = 1.0 }
+field_weights = { title = 5.0, aliases = 4.0, domains = 3.0, type = 2.0, headings = 2.0, body = 1.0, sources = 1.0 }
 
 # Graph-expansion weights. Curated edges come from page `related:` lists;
 # inferred edges come from back-references and shared sources.
