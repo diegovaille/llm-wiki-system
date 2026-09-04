@@ -94,7 +94,7 @@ def main(
     human-readable output. Diagnostics and error messages always go to stderr.
     """
     ctx.ensure_object(dict)
-    ctx.obj["config_path"] = config_path or default_config_path()
+    ctx.obj["config_path"] = config_path.expanduser() if config_path else default_config_path()
     ctx.obj["json"] = json_mode
 
 

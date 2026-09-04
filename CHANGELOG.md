@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-03
+
+### Fixed
+- Graph expansion, third and final cut of the sibling rule. 0.5.2 capped a
+  zero-term neighbor at the *best* matched sibling of its source, which an
+  alias-heavy sibling raised past the page that should have won, and a
+  neighbor reached from a second source escaped the cap through the
+  cross-source max. The cap is now the *lowest* score among the source's
+  neighbors that matched at least two query terms, computed per source, and
+  a neighbor keeps the best of its per-source capped scores. A sibling that
+  matched a single stray body token neither caps nor competes. Top-3 hit
+  rates unchanged; newcomer top-5 11 → 12 of 15; the gold page a round-three
+  review found demoted from rank 5 to 7 sits at rank 4.
+- `--config ~/path` is expanded; the wiki skills pass `"$WIKI_CONFIG"`
+  verbatim and a literal `~` failed with `config not found`.
+- Graph rows reached from several sources take the best score since 0.5.2;
+  0.5.1 kept the first edge's. Now documented.
+
 ## [0.5.2] - 2026-09-03
 
 ### Fixed

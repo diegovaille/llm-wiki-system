@@ -119,10 +119,11 @@ def _score_lexical(
     weights: dict[str, float],
     df: Counter[str],
     n: int,
-) -> tuple[float, list[str], list[str]]:
+) -> tuple[float, list[str], list[str], set[str]]:
     score = 0.0
     matched: list[str] = []
     reasons: list[str] = []
+    terms: set[str] = set()
     for name, default in DEFAULT_FIELD_WEIGHTS.items():
         hit = q_tokens & fields[name]
         if not hit:
@@ -136,7 +137,8 @@ def _score_lexical(
         score += contribution
         matched.append(name)
         reasons.append(f"{name} match: {sorted(hit)}")
-    return score, matched, reasons
+        terms |= hit
+    return score, matched, reasons, terms
 
 
 def _snippet_for(page: PageMeta, q_tokens: set[str]) -> str:
@@ -171,10 +173,12 @@ def run_query(
 
     # Phase 1: lexical scoring
     lex_hits: dict[str, tuple[float, list[str], list[str]]] = {}
+    lex_terms: dict[str, int] = {}
     for page, fields in zip(pages, docs):
-        s, matched, reasons = _score_lexical(fields, q_tokens, cfg.field_weights, df, n)
+        s, matched, reasons, terms = _score_lexical(fields, q_tokens, cfg.field_weights, df, n)
         if s > 0:
             lex_hits[page.id] = (s, matched, reasons)
+            lex_terms[page.id] = len(terms)
 
     results: dict[str, QueryResult] = {}
     id_to_page = {p.id: p for p in pages}
@@ -194,28 +198,28 @@ def run_query(
         )
 
     # Phase 2: 1-hop graph expansion. A neighbor that did not match the
-    # question scores min(source * factor + edge_weight, source): it can
-    # outrank weaker direct hits but never the page that led to it, and never
-    # a sibling neighbor of the same source that did match the question -
-    # four matched terms are better evidence than zero terms plus an edge.
-    # Direct matches keep their own scores: lifting them to the neighbor
-    # score was measured at -3 newcomer hits, because it amplifies the top
-    # hit's neighborhood over the right answer at rank two or three.
+    # question is scored from each source that did, as
+    # min(source * factor + edge_weight, source, cap), and keeps the best of
+    # those. The cap is the LOWEST score among that source's other neighbors
+    # that matched at least two query terms: a zero-term neighbor never
+    # outranks a sibling with real evidence, and a sibling that matched one
+    # stray body token neither caps it nor competes with it. Direct matches
+    # keep their own scores - lifting them to the neighbor score was measured
+    # at -3 newcomer hits, because it amplifies the top hit's neighborhood
+    # over the right answer at rank two or three.
     curated = [e for e in idx.edges if e.kind == "curated"]
     inferred = [e for e in idx.edges if e.kind in ("inferred_backlink", "inferred_source")]
-    matched_sibling: dict[str, float] = {}
+    sibling_cap: dict[str, float] = {}
     for e in curated + inferred:
-        if e.src in lex_hits and e.dst in lex_hits:
-            matched_sibling[e.src] = max(matched_sibling.get(e.src, 0.0), lex_hits[e.dst][0])
+        if e.src in lex_hits and e.dst in lex_hits and lex_terms[e.dst] >= 2:
+            sibling_cap[e.src] = min(sibling_cap.get(e.src, math.inf), lex_hits[e.dst][0])
 
     def expand(kind_label: str, edges, factor: float, weight: float) -> None:
         for e in edges:
             if e.src not in lex_hits or e.dst in lex_hits or e.dst not in id_to_page:
                 continue
             base = lex_hits[e.src][0]
-            score = min(base * factor + weight, base)
-            if e.src in matched_sibling:
-                score = min(score, matched_sibling[e.src])
+            score = min(base * factor + weight, base, sibling_cap.get(e.src, math.inf))
             existing = results.get(e.dst)
             if existing is not None:
                 if score > existing.score:
@@ -239,7 +243,7 @@ def run_query(
     expand("inferred edge", inferred, 0.3, cfg.inferred_edge_weight)
 
     # Phase 3: by score; on a tie a direct match beats a graph row (so a
-    # neighbor capped at its source's or its sibling's score never passes
+    # neighbor capped at its source's or a sibling's score never passes
     # them); then recency (very weak), then id.
     ranked = sorted(
         results.values(),

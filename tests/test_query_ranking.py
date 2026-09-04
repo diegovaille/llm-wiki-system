@@ -214,19 +214,20 @@ def test_graph_neighbor_never_outranks_its_source_but_can_beat_weak_hits(wiki_ro
     assert beta.score <= results[0].score
 
 
-def test_a_neighbor_that_also_matched_outranks_a_neighbor_that_did_not(wiki_root: Path):
-    # alpha is the direct hit; beta and gamma are both its curated neighbors,
-    # and gamma also matches one query token in its body. gamma must not be
-    # stuck at its tiny lexical score below beta, which matched nothing.
-    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta", "demo-gamma"], sources=["s:a"])
+def test_a_zero_term_neighbor_ranks_below_a_two_term_sibling_but_above_a_one_term_one(wiki_root: Path):
+    # alpha is the direct hit; beta, gamma and delta are its curated neighbors.
+    # gamma matched two query terms in its body, delta one stray one, beta none.
+    # A zero-term neighbor must not outrank a sibling with real evidence, and a
+    # one-token sibling must neither cap it nor outrank it.
+    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta", "demo-gamma", "demo-delta"], sources=["s:a"])
     _mk(wiki_root, "demo-beta", title="Beta", sources=["s:b"])
-    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nA pipeline of sorts.\n")
+    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nNotes on the story pipeline.\n")
+    _mk(wiki_root, "demo-delta", title="Delta", sources=["s:d"], body="# d\n\nA pipeline of sorts.\n")
     _index(wiki_root)
     results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
     ids = [r.id for r in results]
-    assert ids[0] == "demo-alpha"
-    assert ids.index("demo-gamma") < ids.index("demo-beta")
-    gamma = next(r for r in results if r.id == "demo-gamma")
-    beta = next(r for r in results if r.id == "demo-beta")
-    assert gamma.match_source == "lexical" and "body" in gamma.matched_fields
-    assert beta.match_source == "graph" and beta.score <= gamma.score
+    assert ids == ["demo-alpha", "demo-gamma", "demo-beta", "demo-delta"]
+    by_id = {r.id: r for r in results}
+    assert by_id["demo-beta"].match_source == "graph"
+    assert by_id["demo-beta"].score <= by_id["demo-gamma"].score
+    assert by_id["demo-beta"].score > by_id["demo-delta"].score

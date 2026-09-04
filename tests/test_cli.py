@@ -564,3 +564,13 @@ def test_config_flag_beats_both_env_vars(tmp_path: Path):
     r = _runner().invoke(main, ["--config", str(flag_cfg), "index", "fromflag"], env={"WIKI_ROOT": str(env_cfg.parent), "WIKI_CONFIG": str(env_cfg)})
     assert r.exit_code == 0, r.output
     assert (flag_cfg.parent / "fromflag" / ".wiki-index.json").exists()
+
+
+def test_config_flag_expands_a_literal_tilde(tmp_path: Path, monkeypatch):
+    # The wiki skills pass "$WIKI_CONFIG" verbatim; a value typed as ~/x must work.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = _discovery_config(tmp_path, "tilde")
+    rel = "~/" + str(cfg.relative_to(tmp_path))
+    r = _runner().invoke(main, ["--config", rel, "index", "tilde"])
+    assert r.exit_code == 0, r.output
+    assert (cfg.parent / "tilde" / ".wiki-index.json").exists()
