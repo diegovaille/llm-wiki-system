@@ -574,3 +574,30 @@ def test_config_flag_expands_a_literal_tilde(tmp_path: Path, monkeypatch):
     r = _runner().invoke(main, ["--config", rel, "index", "tilde"])
     assert r.exit_code == 0, r.output
     assert (cfg.parent / "tilde" / ".wiki-index.json").exists()
+
+
+def test_strict_index_reports_dangling_related_and_duplicate_ids(tmp_path: Path):
+    cfg = _discovery_config(tmp_path, "links")
+    root = cfg.parent
+    from datetime import date
+    from wiki_system.schema import Confidence, PageFrontmatter, PageStatus, PageType
+    from wiki_system.storage import write_page
+
+    def page(id_, related=(), path_id=None):
+        fm = PageFrontmatter(id=id_, title=id_, summary="s", type=PageType.SYSTEM, project="links",
+                             domains=[], status=PageStatus.ACTIVE, aliases=[], sources=["s:x"],
+                             related=list(related), updated_at=date(2026, 9, 4), confidence=Confidence.HIGH)
+        write_page(root, "links", fm, "# b\n\nbody\n")
+        return fm
+
+    page("links-alpha", related=["links-missing"])
+    page("links-beta")
+    # a second file claiming beta's id
+    (root / "links" / "pages" / "links-beta-copy.md").write_text(
+        (root / "links" / "pages" / "links-beta.md").read_text())
+    r = _runner().invoke(main, ["--config", str(cfg), "index", "links", "--strict"])
+    assert r.exit_code == 1, r.output
+    assert "links-alpha: related: names unknown page 'links-missing'" in r.output
+    assert "links-beta: id declared by 2 pages" in r.output
+    r = _runner().invoke(main, ["--config", str(cfg), "index", "links"])
+    assert r.exit_code == 0  # without --strict the warnings are reported, not fatal

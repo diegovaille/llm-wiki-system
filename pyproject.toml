@@ -1,6 +1,6 @@
 [project]
 name = "wiki-system"
-version = "0.5.5"
+version = "0.5.6"
 description = "Question-led personal wiki compiler"
 readme = "README.md"
 requires-python = ">=3.11"

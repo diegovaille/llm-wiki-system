@@ -191,6 +191,19 @@ def index_cmd(ctx: click.Context, project: str, strict: bool) -> None:
                     f"{page.id}: non-canonical domain(s) {unknown}; "
                     f"allowed: {sorted(allowed)}"
                 )
+    # Link integrity: several writers commit pages independently, so an id
+    # can be claimed twice and a related: target can vanish. The index drops a
+    # dangling edge silently; --strict must not.
+    from collections import Counter
+
+    ids = Counter(page.id for page in idx.pages)
+    for page_id, count in sorted(ids.items()):
+        if count > 1:
+            warnings.append(f"{page_id}: id declared by {count} pages")
+    for page in idx.pages:
+        for target in page.related:
+            if target not in ids:
+                warnings.append(f"{page.id}: related: names unknown page {target!r}")
     payload = {"pages_indexed": len(idx.pages), "warnings_count": len(warnings), "warnings": warnings}
 
     def _text(p: dict) -> str:

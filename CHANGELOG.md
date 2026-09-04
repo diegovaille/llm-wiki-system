@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-09-04
+
+### Added
+- `wiki index` warns, and `--strict` fails, when two pages declare the same
+  id or a `related:` entry names a page that does not exist. Several
+  writers committing independently make both easy; the index used to drop
+  a dangling edge silently.
+
 ## [0.5.5] - 2026-09-04
 
 ### Fixed
