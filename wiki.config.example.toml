@@ -50,7 +50,9 @@ source_globs = ["docs/**/*.md"]
 field_weights = { title = 5.0, aliases = 4.0, domains = 3.0, type = 2.0, headings = 2.0, body = 1.0, sources = 1.0 }
 
 # Graph-expansion weights. Curated edges come from page `related:` lists;
-# inferred edges come from back-references and shared sources.
+# inferred edges come from back-references and shared sources. A neighbor
+# scores min(source * factor + weight, source): it can outrank weaker direct
+# hits, never the page that led to it.
 curated_edge_weight = 3.0
 inferred_edge_weight = 1.0
 

@@ -197,3 +197,18 @@ def test_single_page_corpus_still_retrieves(wiki_root: Path):
     _index(wiki_root)
     results = run_query(wiki_root, "demo", "story", RetrievalConfig(), limit=5)
     assert [r.id for r in results] == ["demo-story-pipeline"]
+
+
+def test_graph_neighbor_never_outranks_its_source_but_can_beat_weak_hits(wiki_root: Path):
+    # "story pipeline" matches alpha on title (strong), and gamma on one body
+    # token (weak). beta is only alpha's curated neighbor.
+    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta"], sources=["s:a"])
+    _mk(wiki_root, "demo-beta", title="Beta", sources=["s:b"])
+    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nA pipeline of sorts.\n")
+    _index(wiki_root)
+    results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
+    ids = [r.id for r in results]
+    assert ids[0] == "demo-alpha"
+    assert ids.index("demo-beta") < ids.index("demo-gamma")
+    beta = next(r for r in results if r.id == "demo-beta")
+    assert beta.score <= results[0].score

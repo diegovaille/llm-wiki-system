@@ -204,7 +204,7 @@ def run_query(
                 title=p.title,
                 summary=p.summary,
                 path=p.path,
-                score=base * 0.6 + cfg.curated_edge_weight,
+                score=min(base * 0.6 + cfg.curated_edge_weight, base),
                 matched_fields=[],
                 match_source="graph",
                 reasons=[f"curated edge from {e.src}"],
@@ -224,22 +224,23 @@ def run_query(
                 title=p.title,
                 summary=p.summary,
                 path=p.path,
-                score=base * 0.3 + cfg.inferred_edge_weight,
+                score=min(base * 0.3 + cfg.inferred_edge_weight, base),
                 matched_fields=[],
                 match_source="graph",
                 reasons=[f"inferred edge ({e.kind}) from {e.src}"],
                 snippet=_snippet_for(p, q_tokens),
             )
 
-    # Phase 3: direct matches first, then graph neighbors; within each class by
-    # score, then recency (very weak), then id. A page the question never
-    # mentioned must not outrank the page that led to it — with IDF-scaled
-    # scores the additive edge weight would do exactly that on small corpora.
+    # Phase 3: by score, then direct matches before graph neighbors on a tie,
+    # then recency (very weak), then id. A neighbor's score is capped at its
+    # source's (above), so a page the question never mentioned can outrank
+    # weaker direct hits but never the page that led to it — with IDF-scaled
+    # scores the uncapped additive edge weight did exactly that.
     ranked = sorted(
         results.values(),
         key=lambda r: (
-            r.match_source != "lexical",
             -r.score,
+            r.match_source != "lexical",
             -id_to_page[r.id].updated_at.toordinal(),
             r.id,
         ),

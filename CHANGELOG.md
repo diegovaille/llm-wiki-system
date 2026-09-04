@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-03
+
+### Changed
+- A page reached only through the link graph is scored at most as high as
+  the direct match that led to it (`min(base * factor + edge_weight, base)`).
+  0.4.0 had ranked every graph row after every direct match instead, which
+  with body scoring meant a `related:` page almost never appeared in the top
+  five (0 of 117 title queries on a 117-page corpus; 25 graph rows across 36
+  benchmark questions after this change, hit rates unchanged). The edge
+  weights in `[retrieval]` therefore lift a neighbor above weaker direct
+  hits again, never above its source.
+
+### Fixed
+- `docs/DESIGN.md` listed `id` among the scored fields; it never was.
+- `uv.lock` had not been refreshed at v0.4.0 and v0.5.0.
+
 ## [0.5.0] - 2026-09-03
 
 ### Added
