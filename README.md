@@ -141,7 +141,7 @@ Lexical scoring over `title`, `aliases`, `domains`, `type`, `headings`, `body`, 
 - **Inferred backlinks** (reverse of curated)
 - **Inferred source-overlap** edges (bidirectional when two pages share a source)
 
-A neighbor is scored at most as high as the direct match it came from, and at most as high as the weakest sibling of that source that matched two or more query terms (per source; the best source wins), so the edge weights lift related pages above stray one-token hits and never above pages with real evidence.
+A neighbor is scored at most as high as the direct match it came from (the first edge that reaches it counts: curated before inferred), so the edge weights lift related pages above weaker direct hits and never above the page the question actually matched.
 
 The result is a deterministic ranked list with reasons and snippets — the scorer is ~50 lines of Python, not a model, and every decision is inspectable. See `src/wiki_system/query.py`.
 

@@ -119,11 +119,10 @@ def _score_lexical(
     weights: dict[str, float],
     df: Counter[str],
     n: int,
-) -> tuple[float, list[str], list[str], set[str]]:
+) -> tuple[float, list[str], list[str]]:
     score = 0.0
     matched: list[str] = []
     reasons: list[str] = []
-    terms: set[str] = set()
     for name, default in DEFAULT_FIELD_WEIGHTS.items():
         hit = q_tokens & fields[name]
         if not hit:
@@ -137,8 +136,7 @@ def _score_lexical(
         score += contribution
         matched.append(name)
         reasons.append(f"{name} match: {sorted(hit)}")
-        terms |= hit
-    return score, matched, reasons, terms
+    return score, matched, reasons
 
 
 def _snippet_for(page: PageMeta, q_tokens: set[str]) -> str:
@@ -173,12 +171,10 @@ def run_query(
 
     # Phase 1: lexical scoring
     lex_hits: dict[str, tuple[float, list[str], list[str]]] = {}
-    lex_terms: dict[str, int] = {}
     for page, fields in zip(pages, docs):
-        s, matched, reasons, terms = _score_lexical(fields, q_tokens, cfg.field_weights, df, n)
+        s, matched, reasons = _score_lexical(fields, q_tokens, cfg.field_weights, df, n)
         if s > 0:
             lex_hits[page.id] = (s, matched, reasons)
-            lex_terms[page.id] = len(terms)
 
     results: dict[str, QueryResult] = {}
     id_to_page = {p.id: p for p in pages}
@@ -198,33 +194,37 @@ def run_query(
         )
 
     # Phase 2: 1-hop graph expansion. A neighbor that did not match the
-    # question is scored from each source that did, as
-    # min(source * factor + edge_weight, source, cap), and keeps the best of
-    # those. The cap is the LOWEST score among that source's other neighbors
-    # that matched at least two query terms: a zero-term neighbor never
-    # outranks a sibling with real evidence, and a sibling that matched one
-    # stray body token neither caps it nor competes with it. Direct matches
-    # keep their own scores - lifting them to the neighbor score was measured
-    # at -3 newcomer hits, because it amplifies the top hit's neighborhood
-    # over the right answer at rank two or three.
+    # question scores min(source * factor + edge_weight, source) from the
+    # first edge that reaches it: curated edges (hand-written related: lists)
+    # before inferred ones (backlinks, shared sources), index order within.
+    # So a related page can outrank weaker direct matches - including other
+    # neighbors of the same source that matched a few terms - but never the
+    # page that led to it. That is the designed reach of the edge weights.
+    #
+    # Three attempts to also rank a zero-term neighbor below any matched
+    # sibling were built and measured (0.5.2 and 0.5.3, and a lift of the
+    # sibling to the neighbor score). Each left the top-3 benchmark unchanged
+    # and cost the neighborhood: the lift amplified the top hit's neighbors
+    # over the right answer at rank two (-3 newcomer hits); capping at the
+    # best sibling let an alias-heavy sibling raise the cap; capping at the
+    # weakest two-term sibling let two stray body tokens cap everything
+    # (graph rows in the top five over 117 title queries: 30 -> 6). Direct
+    # matches keep their own scores. Measure with the neighborhood metric in
+    # retrieval-eval.py before trying a fourth.
     curated = [e for e in idx.edges if e.kind == "curated"]
     inferred = [e for e in idx.edges if e.kind in ("inferred_backlink", "inferred_source")]
-    sibling_cap: dict[str, float] = {}
-    for e in curated + inferred:
-        if e.src in lex_hits and e.dst in lex_hits and lex_terms[e.dst] >= 2:
-            sibling_cap[e.src] = min(sibling_cap.get(e.src, math.inf), lex_hits[e.dst][0])
 
     def expand(kind_label: str, edges, factor: float, weight: float) -> None:
         for e in edges:
             if e.src not in lex_hits or e.dst in lex_hits or e.dst not in id_to_page:
                 continue
             base = lex_hits[e.src][0]
-            score = min(base * factor + weight, base, sibling_cap.get(e.src, math.inf))
-            existing = results.get(e.dst)
-            if existing is not None:
-                if score > existing.score:
-                    existing.score = score
-                    existing.reasons.append(f"{kind_label} from {e.src}")
+            score = min(base * factor + weight, base)
+            if e.dst in results:
+                # First edge wins: curated before inferred, index order within.
+                # Taking the strongest source instead measured one newcomer
+                # hit fewer (10/15) and 56 graph rows in the title top fives
+                # against 30 - the stronger sources are the attractors.
                 continue
             p = id_to_page[e.dst]
             results[p.id] = QueryResult(
@@ -243,8 +243,8 @@ def run_query(
     expand("inferred edge", inferred, 0.3, cfg.inferred_edge_weight)
 
     # Phase 3: by score; on a tie a direct match beats a graph row (so a
-    # neighbor capped at its source's or a sibling's score never passes
-    # them); then recency (very weak), then id.
+    # neighbor capped at its source's score never passes it); then recency
+    # (very weak), then id.
     ranked = sorted(
         results.values(),
         key=lambda r: (

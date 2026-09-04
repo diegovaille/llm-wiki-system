@@ -214,20 +214,32 @@ def test_graph_neighbor_never_outranks_its_source_but_can_beat_weak_hits(wiki_ro
     assert beta.score <= results[0].score
 
 
-def test_a_zero_term_neighbor_ranks_below_a_two_term_sibling_but_above_a_one_term_one(wiki_root: Path):
-    # alpha is the direct hit; beta, gamma and delta are its curated neighbors.
-    # gamma matched two query terms in its body, delta one stray one, beta none.
-    # A zero-term neighbor must not outrank a sibling with real evidence, and a
-    # one-token sibling must neither cap it nor outrank it.
-    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta", "demo-gamma", "demo-delta"], sources=["s:a"])
+def test_a_neighbor_never_outranks_its_source_and_beats_a_one_token_direct_hit(wiki_root: Path):
+    # beta is alpha's curated neighbor; gamma matched one stray body token.
+    # A related page of the top hit is worth more than a one-token direct hit,
+    # and never more than the page that led to it. Ranking it below every
+    # matched sibling was tried three ways and measured worse; see run_query.
+    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta"], sources=["s:a"])
     _mk(wiki_root, "demo-beta", title="Beta", sources=["s:b"])
-    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nNotes on the story pipeline.\n")
-    _mk(wiki_root, "demo-delta", title="Delta", sources=["s:d"], body="# d\n\nA pipeline of sorts.\n")
+    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nA pipeline of sorts.\n")
     _index(wiki_root)
     results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
-    ids = [r.id for r in results]
-    assert ids == ["demo-alpha", "demo-gamma", "demo-beta", "demo-delta"]
+    assert [r.id for r in results] == ["demo-alpha", "demo-beta", "demo-gamma"]
     by_id = {r.id: r for r in results}
     assert by_id["demo-beta"].match_source == "graph"
-    assert by_id["demo-beta"].score <= by_id["demo-gamma"].score
-    assert by_id["demo-beta"].score > by_id["demo-delta"].score
+    assert by_id["demo-beta"].score <= by_id["demo-alpha"].score
+
+
+def test_a_curated_source_is_not_replaced_by_a_stronger_inferred_one(wiki_root: Path):
+    # beta is a curated neighbor of weak gamma and shares a source with strong
+    # alpha. Curated edges are applied first and the first edge wins: beta
+    # keeps gamma's score.
+    _mk(wiki_root, "demo-alpha", title="Story Pipeline", sources=["docs/shared.md"])
+    _mk(wiki_root, "demo-beta", title="Beta", sources=["docs/shared.md"])
+    _mk(wiki_root, "demo-gamma", title="Gamma", related=["demo-beta"], sources=["s:c"], body="# g\n\nA pipeline of sorts.\n")
+    _index(wiki_root)
+    results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
+    beta = next(r for r in results if r.id == "demo-beta")
+    gamma = next(r for r in results if r.id == "demo-gamma")
+    assert beta.reasons == ["curated edge from demo-gamma"]
+    assert beta.score <= gamma.score

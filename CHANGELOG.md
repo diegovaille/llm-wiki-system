@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-09-03
+
+### Changed
+- Graph expansion returns to the 0.5.1 rule: a neighbor scores
+  `min(source * factor + edge_weight, source)` from the first edge that
+  reaches it - curated before inferred, index order within, exactly as
+  0.5.1. Taking the strongest source instead (0.5.2-0.5.3 did) measured one
+  newcomer hit fewer and 56 graph rows in the title top fives against 30:
+  the stronger sources are the alias-heavy attractors. The sibling caps of
+  0.5.2 and 0.5.3 are withdrawn. A
+  round-four review measured 0.5.3's "lowest two-term sibling" cap binding
+  on 145 of 153 queries, usually on two stray body tokens, which switched
+  graph expansion off (top-five graph rows over 117 title queries: 30 on
+  0.5.1, 6 on 0.5.3) while the top-3 benchmark never moved. A related page
+  of a strong hit therefore can outrank a weaker direct match, including a
+  sibling that matched a few terms; that is the designed reach of the edge
+  weights, now stated in DESIGN.md rather than fought.
+
 ## [0.5.3] - 2026-09-03
 
 ### Fixed
