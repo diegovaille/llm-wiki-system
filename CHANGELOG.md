@@ -7,15 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-04
+
+### Fixed
+- Inferred-edge `reasons` name the edge kind again (`inferred edge
+  (inferred_backlink) from ...`), as 0.5.1 did; 0.5.2 had dropped it and
+  0.5.4 kept the shorter string. Ranking unchanged.
+- A test now pins the withdrawn sibling caps: a zero-term neighbor of the
+  top hit ranks above a sibling that matched two body tokens. It fails on
+  0.5.2 and 0.5.3.
+
 ## [0.5.4] - 2026-09-03
 
 ### Changed
 - Graph expansion returns to the 0.5.1 rule: a neighbor scores
   `min(source * factor + edge_weight, source)` from the first edge that
   reaches it - curated before inferred, index order within, exactly as
-  0.5.1. Taking the strongest source instead (0.5.2-0.5.3 did) measured one
-  newcomer hit fewer and 56 graph rows in the title top fives against 30:
-  the stronger sources are the alias-heavy attractors. The sibling caps of
+  0.5.1. Taking the strongest curated source instead, curated still before
+  inferred, measured one newcomer hit fewer and 56 graph rows in the title
+  top fives against 30 (strongest source over all edges: 62): the stronger
+  sources are the alias-heavy attractors. The sibling caps of
   0.5.2 and 0.5.3 are withdrawn. A
   round-four review measured 0.5.3's "lowest two-term sibling" cap binding
   on 145 of 153 queries, usually on two stray body tokens, which switched

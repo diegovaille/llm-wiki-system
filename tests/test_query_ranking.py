@@ -241,5 +241,18 @@ def test_a_curated_source_is_not_replaced_by_a_stronger_inferred_one(wiki_root: 
     results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
     beta = next(r for r in results if r.id == "demo-beta")
     gamma = next(r for r in results if r.id == "demo-gamma")
-    assert beta.reasons == ["curated edge from demo-gamma"]
+    assert beta.reasons == ["curated edge from demo-gamma"]  # never re-scored by the shared-source edge
     assert beta.score <= gamma.score
+
+
+def test_a_zero_term_neighbor_may_outrank_a_two_term_sibling(wiki_root: Path):
+    # Pins the withdrawn sibling caps (0.5.2, 0.5.3): beta matched nothing and
+    # is alpha's neighbor; gamma is alpha's neighbor too and matched both
+    # query terms in its body. beta still ranks above gamma - the edge weight
+    # is worth more than two body tokens, by design. Fails on 0.5.2 and 0.5.3.
+    _mk(wiki_root, "demo-alpha", title="Story Pipeline", related=["demo-beta", "demo-gamma"], sources=["s:a"])
+    _mk(wiki_root, "demo-beta", title="Beta", sources=["s:b"])
+    _mk(wiki_root, "demo-gamma", title="Gamma", sources=["s:c"], body="# g\n\nNotes on the story pipeline.\n")
+    _index(wiki_root)
+    results = run_query(wiki_root, "demo", "story pipeline", RetrievalConfig(), limit=5)
+    assert [r.id for r in results] == ["demo-alpha", "demo-beta", "demo-gamma"]

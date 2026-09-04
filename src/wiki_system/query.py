@@ -222,9 +222,11 @@ def run_query(
             score = min(base * factor + weight, base)
             if e.dst in results:
                 # First edge wins: curated before inferred, index order within.
-                # Taking the strongest source instead measured one newcomer
-                # hit fewer (10/15) and 56 graph rows in the title top fives
-                # against 30 - the stronger sources are the attractors.
+                # Taking the strongest curated source instead (curated still
+                # before inferred) measured one newcomer hit fewer (10/15) and
+                # 56 graph rows in the title top fives against 30; strongest
+                # source over all edges, 62. The stronger sources are the
+                # alias-heavy attractors.
                 continue
             p = id_to_page[e.dst]
             results[p.id] = QueryResult(
@@ -240,7 +242,8 @@ def run_query(
             )
 
     expand("curated edge", curated, 0.6, cfg.curated_edge_weight)
-    expand("inferred edge", inferred, 0.3, cfg.inferred_edge_weight)
+    for kind in ("inferred_backlink", "inferred_source"):
+        expand(f"inferred edge ({kind})", [e for e in inferred if e.kind == kind], 0.3, cfg.inferred_edge_weight)
 
     # Phase 3: by score; on a tie a direct match beats a graph row (so a
     # neighbor capped at its source's score never passes it); then recency
