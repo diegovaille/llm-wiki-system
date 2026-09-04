@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-03
+
+### Added
+- Config discovery without `--config`: `WIKI_CONFIG` names the file, else
+  `WIKI_ROOT/wiki.config.toml`, else `~/Git/wiki/wiki.config.toml`. The
+  plugin skills and the prompt hook read the same two variables.
+- A relative `[wiki] root` (`"."` is the useful value) resolves against the
+  directory holding the config file, so a tracked config works from any
+  clone location. Before, `root = "~/Git/wiki"` was literal and `--config`
+  on a clone elsewhere silently wrote the index into `~/Git/wiki`.
+
 ## [0.4.0] - 2026-09-03
 
 ### Changed

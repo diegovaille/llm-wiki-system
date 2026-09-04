@@ -27,7 +27,7 @@ source_globs = ["docs/**/*.md"]
     )
     cfg = load_config(cfg_path)
     assert isinstance(cfg, WikiConfig)
-    assert cfg.wiki.root == "~/Git/wiki"
+    assert cfg.wiki.root == str(Path("~/Git/wiki").expanduser().resolve())  # normalized at load
     assert cfg.execution.mode == "agent"
     assert cfg.execution.agent.runtime == "claude-code"
     assert len(cfg.projects) == 1
@@ -149,3 +149,35 @@ repo_path = "~/Git/demo"
 """
     )
     assert load_config(cfg_path).projects[0].domains == []
+
+
+def _write(cfg_path: Path, root: str) -> None:
+    cfg_path.write_text(
+        f"""
+[wiki]
+root = "{root}"
+
+[execution]
+mode = "agent"
+
+[execution.agent]
+runtime = "claude-code"
+"""
+    )
+
+
+def test_relative_root_resolves_against_the_config_directory(tmp_path: Path):
+    cfg_path = tmp_path / "clone" / "wiki.config.toml"
+    cfg_path.parent.mkdir()
+    _write(cfg_path, ".")
+    assert load_config(cfg_path).wiki_root_path() == (tmp_path / "clone").resolve()
+    _write(cfg_path, "data/wiki")
+    assert load_config(cfg_path).wiki_root_path() == (tmp_path / "clone" / "data" / "wiki").resolve()
+
+
+def test_absolute_and_home_roots_are_unchanged(tmp_path: Path):
+    cfg_path = tmp_path / "wiki.config.toml"
+    _write(cfg_path, str(tmp_path / "elsewhere"))
+    assert load_config(cfg_path).wiki_root_path() == (tmp_path / "elsewhere").resolve()
+    _write(cfg_path, "~/Git/wiki")
+    assert load_config(cfg_path).wiki_root_path() == Path("~/Git/wiki").expanduser().resolve()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,19 @@ from wiki_system.review import list_review_queue
 from wiki_system.sync import run_sync
 
 
-DEFAULT_CONFIG = Path("~/Git/wiki/wiki.config.toml").expanduser()
+def default_config_path() -> Path:
+    """Where the config lives when --config is not given.
+
+    `WIKI_CONFIG` names the file; `WIKI_ROOT` names the directory holding it.
+    The plugin skills and the prompt hook read the same two variables, so a
+    wiki cloned anywhere but ~/Git/wiki needs one shell export, not a flag on
+    every command.
+    """
+    explicit = os.environ.get("WIKI_CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
+    root = os.environ.get("WIKI_ROOT") or "~/Git/wiki"
+    return Path(root).expanduser() / "wiki.config.toml"
 
 
 def _load_config_or_die(ctx: click.Context) -> WikiConfig:
@@ -81,7 +94,7 @@ def main(
     human-readable output. Diagnostics and error messages always go to stderr.
     """
     ctx.ensure_object(dict)
-    ctx.obj["config_path"] = config_path or DEFAULT_CONFIG
+    ctx.obj["config_path"] = config_path or default_config_path()
     ctx.obj["json"] = json_mode
 
 

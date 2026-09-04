@@ -104,7 +104,23 @@ class WikiConfig(BaseModel):
         return self.wiki_root_path() / name
 
 
+def resolve_wiki_root(root: str, config_dir: Path) -> Path:
+    """`[wiki] root` as an absolute path.
+
+    A relative value — `"."` is the useful one — is taken from the directory
+    that holds the config file, so a tracked config can travel with a clone
+    instead of hardcoding one machine's checkout path. `~` and absolute paths
+    are unchanged.
+    """
+    expanded = Path(root).expanduser()
+    if expanded.is_absolute():
+        return expanded.resolve()
+    return (config_dir / expanded).resolve()
+
+
 def load_config(path: Path) -> WikiConfig:
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
-    return WikiConfig.model_validate(data)
+    cfg = WikiConfig.model_validate(data)
+    cfg.wiki.root = str(resolve_wiki_root(cfg.wiki.root, Path(path).resolve().parent))
+    return cfg

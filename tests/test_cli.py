@@ -516,3 +516,51 @@ def test_cli_index_no_allowlist_keeps_free_form_domains(
     )
     assert r.exit_code == 0, (r.stdout, r.stderr)
     assert json.loads(r.stdout)["warnings_count"] == 0
+
+
+# ---- 0.5.0: config discovery without --config ------------------------------
+
+
+def _discovery_config(tmp_path: Path, name: str) -> Path:
+    d = tmp_path / name
+    d.mkdir()
+    cfg = d / "wiki.config.toml"
+    cfg.write_text(
+        f"""
+[wiki]
+root = "."
+[execution]
+mode = "agent"
+[execution.agent]
+runtime = "claude-code"
+[[projects]]
+name = "{name}"
+repo_path = "{d}"
+"""
+    )
+    (d / name / "pages").mkdir(parents=True)
+    return cfg
+
+
+def test_wiki_root_env_selects_the_config(tmp_path: Path):
+    cfg = _discovery_config(tmp_path, "rooted")
+    r = _runner().invoke(main, ["index", "rooted"], env={"WIKI_ROOT": str(cfg.parent), "WIKI_CONFIG": None})
+    assert r.exit_code == 0, r.output + (r.stderr if hasattr(r, "stderr") else "")
+    assert (cfg.parent / "rooted" / ".wiki-index.json").exists()
+
+
+def test_wiki_config_env_beats_wiki_root(tmp_path: Path):
+    by_root = _discovery_config(tmp_path, "byroot")
+    by_file = _discovery_config(tmp_path, "byfile")
+    r = _runner().invoke(main, ["index", "byfile"], env={"WIKI_ROOT": str(by_root.parent), "WIKI_CONFIG": str(by_file)})
+    assert r.exit_code == 0, r.output
+    assert (by_file.parent / "byfile" / ".wiki-index.json").exists()
+    assert not (by_root.parent / "byfile" / ".wiki-index.json").exists()
+
+
+def test_config_flag_beats_both_env_vars(tmp_path: Path):
+    env_cfg = _discovery_config(tmp_path, "fromenv")
+    flag_cfg = _discovery_config(tmp_path, "fromflag")
+    r = _runner().invoke(main, ["--config", str(flag_cfg), "index", "fromflag"], env={"WIKI_ROOT": str(env_cfg.parent), "WIKI_CONFIG": str(env_cfg)})
+    assert r.exit_code == 0, r.output
+    assert (flag_cfg.parent / "fromflag" / ".wiki-index.json").exists()

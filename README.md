@@ -124,6 +124,15 @@ confidence: high                  # high | medium | low
 - Changes to `pages/` ONLY happen via `wiki promote`. This is enforced by convention, not filesystem permissions, but every promote is atomic, diff'd, audited in `sources/manifest.jsonl`, and auto-reindexes views afterward.
 - See [`docs/DESIGN.md`](docs/DESIGN.md) for the full schema, staging envelope, page identity invariant, and ranking model.
 
+## Finding the config
+
+Every command takes `--config PATH`. Without it the CLI reads `WIKI_CONFIG`
+(the file), then `WIKI_ROOT/wiki.config.toml`, then `~/Git/wiki/wiki.config.toml`.
+Inside the file, a relative `[wiki] root` — `"."` — means the directory the
+file is in, so a config committed at the root of a wiki repo works wherever
+the repo is cloned. The index and the generated views are per clone: run
+`wiki index <project>` after cloning.
+
 ## Retrieval model
 
 Lexical scoring over `title`, `aliases`, `domains`, `type`, `headings`, `body`, and `sources`, weighted per `[retrieval] field_weights` in `wiki.config.toml`. Each matched token is discounted by inverse document frequency, so a term found on most pages counts for almost nothing and a rare one counts for a lot; function words are stripped from the question before scoring. Pages with `status: superseded` never score. After lexical hits settle, a 1-hop graph expansion pulls in:

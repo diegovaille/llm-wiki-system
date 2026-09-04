@@ -10,6 +10,9 @@
 # (pages, staging, sources, queries, views, meta) lives under this root,
 # namespaced by project name.
 root = "~/Git/wiki"
+# A relative root ("." is the usual choice) is taken from the directory that
+# holds this file, so the config can be committed and cloned anywhere.
+# Without --config the CLI reads WIKI_CONFIG (file) or WIKI_ROOT (directory).
 
 [execution]
 # v0.1 only implements "agent" mode (a Claude Code / Codex session supplies
