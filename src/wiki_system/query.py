@@ -193,49 +193,54 @@ def run_query(
             snippet=_snippet_for(p, q_tokens),
         )
 
-    # Phase 2: 1-hop graph expansion through curated edges
-    curated_edges = [e for e in idx.edges if e.kind == "curated"]
-    for e in curated_edges:
-        if e.src in lex_hits and e.dst not in results and e.dst in id_to_page:
-            p = id_to_page[e.dst]
+    # Phase 2: 1-hop graph expansion. A neighbor that did not match the
+    # question scores min(source * factor + edge_weight, source): it can
+    # outrank weaker direct hits but never the page that led to it, and never
+    # a sibling neighbor of the same source that did match the question -
+    # four matched terms are better evidence than zero terms plus an edge.
+    # Direct matches keep their own scores: lifting them to the neighbor
+    # score was measured at -3 newcomer hits, because it amplifies the top
+    # hit's neighborhood over the right answer at rank two or three.
+    curated = [e for e in idx.edges if e.kind == "curated"]
+    inferred = [e for e in idx.edges if e.kind in ("inferred_backlink", "inferred_source")]
+    matched_sibling: dict[str, float] = {}
+    for e in curated + inferred:
+        if e.src in lex_hits and e.dst in lex_hits:
+            matched_sibling[e.src] = max(matched_sibling.get(e.src, 0.0), lex_hits[e.dst][0])
+
+    def expand(kind_label: str, edges, factor: float, weight: float) -> None:
+        for e in edges:
+            if e.src not in lex_hits or e.dst in lex_hits or e.dst not in id_to_page:
+                continue
             base = lex_hits[e.src][0]
+            score = min(base * factor + weight, base)
+            if e.src in matched_sibling:
+                score = min(score, matched_sibling[e.src])
+            existing = results.get(e.dst)
+            if existing is not None:
+                if score > existing.score:
+                    existing.score = score
+                    existing.reasons.append(f"{kind_label} from {e.src}")
+                continue
+            p = id_to_page[e.dst]
             results[p.id] = QueryResult(
                 id=p.id,
                 title=p.title,
                 summary=p.summary,
                 path=p.path,
-                score=min(base * 0.6 + cfg.curated_edge_weight, base),
+                score=score,
                 matched_fields=[],
                 match_source="graph",
-                reasons=[f"curated edge from {e.src}"],
+                reasons=[f"{kind_label} from {e.src}"],
                 snippet=_snippet_for(p, q_tokens),
             )
 
-    # Phase 2b: inferred edges, lighter weight, distinct class
-    inferred_edges = [
-        e for e in idx.edges if e.kind in ("inferred_backlink", "inferred_source")
-    ]
-    for e in inferred_edges:
-        if e.src in lex_hits and e.dst not in results and e.dst in id_to_page:
-            p = id_to_page[e.dst]
-            base = lex_hits[e.src][0]
-            results[p.id] = QueryResult(
-                id=p.id,
-                title=p.title,
-                summary=p.summary,
-                path=p.path,
-                score=min(base * 0.3 + cfg.inferred_edge_weight, base),
-                matched_fields=[],
-                match_source="graph",
-                reasons=[f"inferred edge ({e.kind}) from {e.src}"],
-                snippet=_snippet_for(p, q_tokens),
-            )
+    expand("curated edge", curated, 0.6, cfg.curated_edge_weight)
+    expand("inferred edge", inferred, 0.3, cfg.inferred_edge_weight)
 
-    # Phase 3: by score, then direct matches before graph neighbors on a tie,
-    # then recency (very weak), then id. A neighbor's score is capped at its
-    # source's (above), so a page the question never mentioned can outrank
-    # weaker direct hits but never the page that led to it — with IDF-scaled
-    # scores the uncapped additive edge weight did exactly that.
+    # Phase 3: by score; on a tie a direct match beats a graph row (so a
+    # neighbor capped at its source's or its sibling's score never passes
+    # them); then recency (very weak), then id.
     ranked = sorted(
         results.values(),
         key=lambda r: (

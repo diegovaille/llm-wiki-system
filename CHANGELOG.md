@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-03
+
+### Fixed
+- A graph neighbor that matched nothing could outrank a sibling neighbor of
+  the same source that matched several query terms, because the sibling
+  kept its own (smaller) direct score while the zero-term neighbor took
+  `min(source * factor + weight, source)`. A zero-term neighbor is now also
+  capped at the best direct score among that source's matched neighbors.
+  Lifting the matched sibling instead was measured at -3 newcomer hits and
+  rejected: it amplifies the top hit's neighborhood over the right answer at
+  rank two or three. Hit rates unchanged; 27 graph rows across the 36
+  benchmark questions.
+
 ## [0.5.1] - 2026-09-03
 
 ### Changed
